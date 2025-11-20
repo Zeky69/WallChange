@@ -29,6 +29,8 @@ fi
 # 2. Compilation
 echo "[2/5] Compilation..."
 cd "$PROJECT_DIR"
+# Nettoyage préalable pour forcer la recompilation
+make clean
 if make; then
     echo "Compilation réussie."
 else
@@ -40,6 +42,12 @@ fi
 echo "[3/5] Installation dans $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$AUTOSTART_DIR"
+
+# Arrêt des processus existants pour éviter "Text file busy"
+echo "Arrêt des processus existants..."
+pkill wallchange || true
+pkill server || true
+sleep 1
 
 cp wallchange "$INSTALL_DIR/"
 cp server "$INSTALL_DIR/"
