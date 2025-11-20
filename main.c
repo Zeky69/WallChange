@@ -113,30 +113,58 @@ void connect_ws() {
     mg_ws_connect(&mgr, url, fn, NULL, NULL);
 }
 
-// Fonction pour envoyer une image locale à un autre utilisateur
-int send_local_image(const char *filepath, const char *target_user) {
-    char command[2048];
-    // On utilise curl pour uploader le fichier
-    // L'URL de base est WS_URL mais avec http:// au lieu de ws://
+// Fonction pour envoyer une image (locale ou URL) à un autre utilisateur
+int send_command(const char *arg1, const char *arg2) {
+    const char *target_user = NULL;
+    const char *image_source = NULL;
+    int is_url = 0;
+
+    // Détection intelligente des arguments
+    if (strncmp(arg1, "http://", 7) == 0 || strncmp(arg1, "https://", 8) == 0) {
+        image_source = arg1;
+        target_user = arg2;
+        is_url = 1;
+    } else if (strncmp(arg2, "http://", 7) == 0 || strncmp(arg2, "https://", 8) == 0) {
+        image_source = arg2;
+        target_user = arg1;
+        is_url = 1;
+    } else if (access(arg1, F_OK) == 0) {
+        image_source = arg1;
+        target_user = arg2;
+        is_url = 0;
+    } else if (access(arg2, F_OK) == 0) {
+        image_source = arg2;
+        target_user = arg1;
+        is_url = 0;
+    } else {
+        // Par défaut, on suppose que arg1 est l'image pour afficher l'erreur
+        image_source = arg1;
+        target_user = arg2;
+    }
+
+    // Construction de l'URL HTTP du serveur
     char http_url[512];
     strncpy(http_url, WS_URL, sizeof(http_url));
     if (strncmp(http_url, "ws://", 5) == 0) {
-        // Remplacement simple ws -> http
-        http_url[0] = 'h'; http_url[1] = 't'; http_url[2] = 't'; http_url[3] = 'p';
-        // On décale le reste si besoin, mais ici ws:// et http:// ont pas la même longueur (5 vs 7)
-        // Plus simple : on remplace ws par http
         snprintf(http_url, sizeof(http_url), "http%s", WS_URL + 2);
     }
 
-    printf("Envoi de l'image %s à %s via %s...\n", filepath, target_user, http_url);
-    
-    snprintf(command, sizeof(command), 
-             "curl -F \"file=@%s\" \"%s/api/upload?id=%s\"", 
-             filepath, http_url, target_user);
+    char command[2048];
+    if (is_url) {
+        printf("Envoi de l'URL %s à %s...\n", image_source, target_user);
+        snprintf(command, sizeof(command), 
+                 "curl -s \"%s/api/send?id=%s&url=%s\"", 
+                 http_url, target_user, image_source);
+    } else {
+        printf("Upload du fichier %s pour %s...\n", image_source, target_user);
+        snprintf(command, sizeof(command), 
+                 "curl -F \"file=@%s\" \"%s/api/upload?id=%s\"", 
+                 image_source, http_url, target_user);
+    }
              
     int ret = system(command);
     if (ret == 0) {
-        printf("\nImage envoyée avec succès !\n");
+        printf("\nCommande envoyée avec succès !\n");
         return 0;
     } else {
         printf("\nErreur lors de l'envoi.\n");
@@ -147,9 +175,7 @@ int send_local_image(const char *filepath, const char *target_user) {
 int main(int argc, char **argv) {
     // Mode commande : envoi d'image
     if (argc >= 4 && strcmp(argv[1], "send") == 0) {
-        const char *filepath = argv[2];
-        const char *target_user = argv[3];
-        return send_local_image(filepath, target_user);
+        return send_command(argv[2], argv[3]);
     }
 
     mg_mgr_init(&mgr);
