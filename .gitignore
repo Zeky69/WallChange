@@ -1,0 +1,5 @@
+wallchange
+server
+*.o
+uploads/
+.vscode/
