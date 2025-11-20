@@ -17,10 +17,10 @@ else
     echo "[1/5] Récupération du projet depuis GitHub..."
     if [ -d "$CLONE_DIR" ]; then
         echo "Mise à jour du projet existant..."
-        cd "$CLONE_DIR" && git pull
+        cd "$CLONE_DIR" && git fetch && git checkout master && git pull origin master
     else
         echo "Clonage du dépôt..."
-        git clone "$REPO_URL" "$CLONE_DIR"
+        git clone -b master "$REPO_URL" "$CLONE_DIR"
         cd "$CLONE_DIR"
     fi
     PROJECT_DIR="$CLONE_DIR"
