@@ -7,18 +7,22 @@ Système complet de changement de fond d'écran à distance via WebSocket.
 1.  **Client (`wallchange`)** : S'exécute sur le poste utilisateur, se connecte au serveur et change le fond d'écran.
 2.  **Serveur (`server`)** : Gère les connexions et permet d'envoyer des commandes aux clients.
 
-## Installation Automatique
+## Installation Automatique (Recommandé)
 
-Pour installer le client et le configurer pour qu'il se lance automatiquement au démarrage de la session :
+Vous pouvez installer Wallchange avec une seule commande. Le script va télécharger le projet, le compiler, l'installer et configurer les alias.
 
 ```bash
-./install.sh
+curl -sL https://raw.githubusercontent.com/Zeky69/WallChange/master/install.sh | bash
 ```
 
-Cela va :
-1. Compiler le projet.
-2. Copier les exécutables dans `~/.local/bin`.
-3. Créer une entrée de démarrage automatique dans `~/.config/autostart`.
+Une fois installé :
+- Le client se lance automatiquement au démarrage.
+- Vous avez accès à la commande `wallchange` dans votre terminal.
+
+Exemple d'utilisation :
+```bash
+wallchange send mon_image.jpg zakburak
+```
 
 ## Compilation Manuelle
 
