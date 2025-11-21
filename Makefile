@@ -27,3 +27,5 @@ cJSON.c:
 
 clean:
 	rm -f $(TARGET_CLIENT) $(TARGET_SERVER) mongoose.c mongoose.h cJSON.c cJSON.h
+
+re: clean all

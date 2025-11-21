@@ -48,6 +48,34 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 mg_http_reply(c, 400, "", "Missing 'id' or 'url' parameter\n");
             }
         }
+        // 1.5 API pour demander une mise à jour au client
+        else if (mg_match(hm->uri, mg_str("/api/update"), NULL)) {
+            char target_id[32];
+            get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+
+            if (strlen(target_id) > 0) {
+                // Création du JSON
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "command", "update");
+                char *json_str = cJSON_PrintUnformatted(json);
+
+                int found = 0;
+                // On parcourt toutes les connexions pour trouver la bonne
+                for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
+                    if (t->is_websocket && strcmp(t->data, target_id) == 0) {
+                        mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
+                        found++;
+                    }
+                }
+
+                free(json_str);
+                cJSON_Delete(json);
+
+                mg_http_reply(c, 200, "", "Update request sent to %d client(s)\n", found);
+            } else {
+                mg_http_reply(c, 400, "", "Missing 'id' parameter\n");
+            }
+        }
         // 2. API pour uploader une image
         else if (mg_match(hm->uri, mg_str("/api/upload"), NULL)) {
             // On utilise mg_http_upload pour gérer le multipart
