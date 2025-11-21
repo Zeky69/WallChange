@@ -13,7 +13,7 @@
 #endif
 
 // Configuration
-#define WS_URL "ws://localhost:8000" 
+#define WS_URL "ws://wallchange.codeky.fr" 
 
 // Variables globales
 static int interrupted = 0;
