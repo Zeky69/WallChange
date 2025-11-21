@@ -15,6 +15,7 @@
 // Configuration
 #define WS_URL "wss://wallchange.codeky.fr" 
 
+
 // Variables globales
 static int interrupted = 0;
 static struct mg_mgr mgr;
