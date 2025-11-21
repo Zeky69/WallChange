@@ -1,5 +1,7 @@
 #include "mongoose.h"
 #include "cJSON.h"
+#include <sys/stat.h>
+#include <sys/types.h>
 
 static const char *s_listen_on = "ws://0.0.0.0:8000";
 static const char *s_upload_dir = "uploads";
@@ -182,6 +184,9 @@ int main(void) {
     struct mg_mgr mgr;
     mg_mgr_init(&mgr);
     
+    // Création du dossier uploads s'il n'existe pas
+    mkdir(s_upload_dir, 0755);
+
     printf("Serveur démarré sur %s\n", s_listen_on);
     mg_http_listen(&mgr, s_listen_on, fn, NULL);
     
