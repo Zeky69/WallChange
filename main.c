@@ -204,6 +204,14 @@ void handle_message(const char *msg, size_t len) {
 static void fn(struct mg_connection *c, int ev, void *ev_data) {
     if (ev == MG_EV_OPEN) {
         // Connexion TCP ouverte
+    } else if (ev == MG_EV_CONNECT) {
+        if (c->is_tls) {
+            struct mg_tls_opts opts = {
+                // .ca = mg_str("/etc/ssl/certs/ca-certificates.crt"),
+                .name = mg_str("wallchange.codeky.fr")
+            };
+            mg_tls_init(c, &opts);
+        }
     } else if (ev == MG_EV_WS_OPEN) {
         printf("Connexion WebSocket établie !\n");
         ws_conn = c;
