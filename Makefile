@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -O2 -DMG_ENABLE_OPENSSL=1
+CFLAGS = -O2 -DMG_TLS=2
 LDFLAGS = -lssl -lcrypto
 
 TARGET_CLIENT = wallchange
