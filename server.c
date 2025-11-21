@@ -180,15 +180,23 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
     }
 }
 
-int main(void) {
+int main(int argc, char *argv[]) {
     struct mg_mgr mgr;
     mg_mgr_init(&mgr);
     
     // Création du dossier uploads s'il n'existe pas
     mkdir(s_upload_dir, 0755);
 
-    printf("Serveur démarré sur %s\n", s_listen_on);
-    mg_http_listen(&mgr, s_listen_on, fn, NULL);
+    const char *listen_on = s_listen_on;
+    char dynamic_listen_on[64];
+
+    if (argc > 1) {
+        snprintf(dynamic_listen_on, sizeof(dynamic_listen_on), "ws://0.0.0.0:%s", argv[1]);
+        listen_on = dynamic_listen_on;
+    }
+
+    printf("Serveur démarré sur %s\n", listen_on);
+    mg_http_listen(&mgr, listen_on, fn, NULL);
     
     for (;;) mg_mgr_poll(&mgr, 1000);
     
