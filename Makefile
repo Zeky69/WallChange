@@ -12,3 +12,5 @@ $(TARGET_CLIENT): mongoose.c cJSON.c $(SRC_CLIENT)
 
 clean:
 	rm -f $(TARGET_CLIENT) mongoose.c mongoose.h cJSON.c cJSON.h
+
+re: clean all
