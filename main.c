@@ -263,16 +263,34 @@ int send_command(const char *arg1, const char *arg2) {
         target_user = arg1;
         is_url = 0;
     } else {
-        // Par défaut, on suppose que arg1 est l'image pour afficher l'erreur
-        image_source = arg1;
-        target_user = arg2;
+        // Aucun fichier existant trouvé.
+        // On essaie de deviner si l'un des args ressemble à un chemin
+        if (strchr(arg1, '/') != NULL) {
+             image_source = arg1;
+             target_user = arg2;
+        } else if (strchr(arg2, '/') != NULL) {
+             image_source = arg2;
+             target_user = arg1;
+        } else {
+             // Par défaut, on suppose que arg1 est l'image
+             image_source = arg1;
+             target_user = arg2;
+        }
+    }
+
+    if (!is_url && access(image_source, F_OK) != 0) {
+        printf("Erreur: Le fichier '%s' est introuvable.\n", image_source);
+        return 1;
     }
 
     // Construction de l'URL HTTP du serveur
     char http_url[512];
-    strncpy(http_url, WS_URL, sizeof(http_url));
-    if (strncmp(http_url, "ws://", 5) == 0) {
+    if (strncmp(WS_URL, "ws://", 5) == 0) {
         snprintf(http_url, sizeof(http_url), "http%s", WS_URL + 2);
+    } else if (strncmp(WS_URL, "wss://", 6) == 0) {
+        snprintf(http_url, sizeof(http_url), "https%s", WS_URL + 3);
+    } else {
+        strncpy(http_url, WS_URL, sizeof(http_url));
     }
 
     char command[2048];
