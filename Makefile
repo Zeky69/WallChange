@@ -1,6 +1,6 @@
 CC = gcc
-CFLAGS = -O2
-LDFLAGS = 
+CFLAGS = -O2 -DMG_TLS=2
+LDFLAGS = -lssl -lcrypto
 
 TARGET_CLIENT = wallchange
 SRC_CLIENT = main.c mongoose.c cJSON.c
