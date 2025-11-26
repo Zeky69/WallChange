@@ -221,3 +221,23 @@ int send_update_command(const char *target_user) {
         return 1;
     }
 }
+
+int send_list_command() {
+    // Construction de l'URL HTTP du serveur
+    char http_url[512];
+    if (strncmp(WS_URL, "ws://", 5) == 0) {
+        snprintf(http_url, sizeof(http_url), "http%s", WS_URL + 2);
+    } else if (strncmp(WS_URL, "wss://", 6) == 0) {
+        snprintf(http_url, sizeof(http_url), "https%s", WS_URL + 3);
+    } else {
+        strncpy(http_url, WS_URL, sizeof(http_url));
+    }
+
+    char command[2048];
+    printf("Récupération de la liste des clients connectés...\n");
+    snprintf(command, sizeof(command), "curl -s \"%s/api/list\"", http_url);
+             
+    int ret = system(command);
+    printf("\n");
+    return (ret == 0) ? 0 : 1;
+}

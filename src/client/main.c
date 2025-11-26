@@ -19,6 +19,10 @@ int main(int argc, char **argv) {
     if (argc >= 3 && strcmp(argv[1], "update") == 0) {
         return send_update_command(argv[2]);
     }
+    // Mode commande : lister les clients
+    if (argc >= 2 && strcmp(argv[1], "list") == 0) {
+        return send_list_command();
+    }
 
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
