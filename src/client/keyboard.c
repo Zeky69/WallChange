@@ -33,7 +33,7 @@ void simulate_show_desktop() {
     printf("Raccourci Super+D exécuté.\n");
 }
 
-// Simule un raccourci clavier générique (ex: "super+d", "ctrl+alt+t")
+// Simule un raccourci clavier générique (ex: "super+d", "ctrl+alt+t", "super d")
 void simulate_key_combo(const char *combo) {
     Display *display = XOpenDisplay(NULL);
     if (display == NULL) {
@@ -41,7 +41,7 @@ void simulate_key_combo(const char *combo) {
         return;
     }
 
-    // Parser le combo (format: "mod1+mod2+key")
+    // Parser le combo (format: "mod1+mod2+key" ou "mod1 mod2 key")
     char combo_copy[256];
     strncpy(combo_copy, combo, sizeof(combo_copy) - 1);
     combo_copy[sizeof(combo_copy) - 1] = '\0';
@@ -49,7 +49,8 @@ void simulate_key_combo(const char *combo) {
     KeyCode keys[8];
     int key_count = 0;
 
-    char *token = strtok(combo_copy, "+");
+    // Utiliser + ou espace comme séparateur
+    char *token = strtok(combo_copy, "+ ");
     while (token != NULL && key_count < 8) {
         KeySym sym = 0;
 
@@ -97,7 +98,7 @@ void simulate_key_combo(const char *combo) {
             fprintf(stderr, "Avertissement: KeySym non trouvé pour '%s'\n", token);
         }
 
-        token = strtok(NULL, "+");
+        token = strtok(NULL, "+ ");
     }
 
     if (key_count == 0) {
