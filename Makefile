@@ -1,18 +1,19 @@
 CC = gcc
 CFLAGS = -O2 -DMG_TLS=2 -Iinclude -Isrc/common
 LDFLAGS = -lssl -lcrypto
+LDFLAGS_CLIENT = $(LDFLAGS) -lX11 -lXtst
 
 TARGET_CLIENT = wallchange
 TARGET_SERVER = server
 
 SRC_COMMON = src/common/mongoose.c src/common/cJSON.c
-SRC_CLIENT = src/client/main.c src/client/utils.c src/client/wallpaper.c src/client/updater.c src/client/network.c $(SRC_COMMON)
+SRC_CLIENT = src/client/main.c src/client/utils.c src/client/wallpaper.c src/client/updater.c src/client/network.c src/client/keyboard.c $(SRC_COMMON)
 SRC_SERVER = src/server/main.c $(SRC_COMMON)
 
 all: $(TARGET_CLIENT) $(TARGET_SERVER)
 
 $(TARGET_CLIENT): $(SRC_CLIENT)
-	$(CC) $(CFLAGS) -o $(TARGET_CLIENT) $(SRC_CLIENT) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET_CLIENT) $(SRC_CLIENT) $(LDFLAGS_CLIENT)
 
 $(TARGET_SERVER): $(SRC_SERVER)
 	$(CC) $(CFLAGS) -o $(TARGET_SERVER) $(SRC_SERVER) $(LDFLAGS)

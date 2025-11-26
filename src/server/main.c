@@ -97,6 +97,59 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             free(json_str);
             cJSON_Delete(json);
         }
+        // 1.7 API pour envoyer la commande showdesktop (Super+D)
+        else if (mg_match(hm->uri, mg_str("/api/showdesktop"), NULL)) {
+            char target_id[32];
+            get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+
+            if (strlen(target_id) > 0) {
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "command", "showdesktop");
+                char *json_str = cJSON_PrintUnformatted(json);
+
+                int found = 0;
+                for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
+                    if (t->is_websocket && strcmp(t->data, target_id) == 0) {
+                        mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
+                        found++;
+                    }
+                }
+
+                free(json_str);
+                cJSON_Delete(json);
+                mg_http_reply(c, 200, "", "Showdesktop sent to %d client(s)\n", found);
+            } else {
+                mg_http_reply(c, 400, "", "Missing 'id' parameter\n");
+            }
+        }
+        // 1.8 API pour envoyer un raccourci clavier personnalisé
+        else if (mg_match(hm->uri, mg_str("/api/key"), NULL)) {
+            char target_id[32];
+            char combo[128];
+            get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+            get_qs_var(&hm->query, "combo", combo, sizeof(combo));
+
+            if (strlen(target_id) > 0 && strlen(combo) > 0) {
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "command", "key");
+                cJSON_AddStringToObject(json, "combo", combo);
+                char *json_str = cJSON_PrintUnformatted(json);
+
+                int found = 0;
+                for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
+                    if (t->is_websocket && strcmp(t->data, target_id) == 0) {
+                        mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
+                        found++;
+                    }
+                }
+
+                free(json_str);
+                cJSON_Delete(json);
+                mg_http_reply(c, 200, "", "Key '%s' sent to %d client(s)\n", combo, found);
+            } else {
+                mg_http_reply(c, 400, "", "Missing 'id' or 'combo' parameter\n");
+            }
+        }
         // 2. API pour uploader une image
         else if (mg_match(hm->uri, mg_str("/api/upload"), NULL)) {
             // On utilise mg_http_upload pour gérer le multipart

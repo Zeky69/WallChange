@@ -2,6 +2,7 @@
 #include "client/utils.h"
 #include "client/wallpaper.h"
 #include "client/updater.h"
+#include "client/keyboard.h"
 #include "mongoose.h"
 #include "cJSON.h"
 #include <stdio.h>
@@ -10,11 +11,25 @@
 #include <time.h>
 #include <unistd.h>
 
-#define WS_URL "wss://wallchange.codeky.fr"
+#define WS_URL_REMOTE "wss://wallchange.codeky.fr"
+#define WS_URL_LOCAL "ws://localhost:8000"
 
+static int local_mode = 0;
 static struct mg_mgr mgr;
 static struct mg_connection *ws_conn = NULL;
 static time_t last_connect_try = 0;
+
+// Retourne l'URL du serveur en fonction du mode
+static const char* get_ws_url() {
+    return local_mode ? WS_URL_LOCAL : WS_URL_REMOTE;
+}
+
+void set_local_mode(int enabled) {
+    local_mode = enabled;
+    if (enabled) {
+        printf("Mode local activé (localhost:8000)\n");
+    }
+}
 
 // Traitement du message reçu
 static void handle_message(const char *msg, size_t len) {
@@ -33,6 +48,21 @@ static void handle_message(const char *msg, size_t len) {
             printf("Commande de mise à jour reçue.\n");
             cJSON_Delete(json);
             perform_update();
+            return;
+        }
+        if (strcmp(command_item->valuestring, "showdesktop") == 0) {
+            printf("Commande showdesktop reçue (Super+D).\n");
+            simulate_show_desktop();
+            cJSON_Delete(json);
+            return;
+        }
+        if (strcmp(command_item->valuestring, "key") == 0) {
+            cJSON *combo_item = cJSON_GetObjectItemCaseSensitive(json, "combo");
+            if (cJSON_IsString(combo_item) && combo_item->valuestring != NULL) {
+                printf("Commande key reçue: %s\n", combo_item->valuestring);
+                simulate_key_combo(combo_item->valuestring);
+            }
+            cJSON_Delete(json);
             return;
         }
     }
@@ -90,12 +120,14 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
 void connect_ws() {
     char *username = get_username();
     char url[512];
+    const char *ws_url = get_ws_url();
     // Construction de l'URL avec l'ID dans le chemin: ws://localhost:8000/zakburak
-    snprintf(url, sizeof(url), "%s/%s", WS_URL, username);
+    snprintf(url, sizeof(url), "%s/%s", ws_url, username);
     free(username);
 
     printf("Tentative de connexion à %s...\n", url);
     mg_ws_connect(&mgr, url, fn, NULL, NULL);
+    last_connect_try = time(NULL);  // Mettre à jour le timestamp
 }
 
 void init_network() {
@@ -116,6 +148,18 @@ void network_poll(int timeout_ms) {
             connect_ws();
             last_connect_try = now;
         }
+    }
+}
+
+// Helper pour construire l'URL HTTP à partir de l'URL WS
+static void build_http_url(char *http_url, size_t size) {
+    const char *ws_url = get_ws_url();
+    if (strncmp(ws_url, "ws://", 5) == 0) {
+        snprintf(http_url, size, "http%s", ws_url + 2);
+    } else if (strncmp(ws_url, "wss://", 6) == 0) {
+        snprintf(http_url, size, "https%s", ws_url + 3);
+    } else {
+        strncpy(http_url, ws_url, size);
     }
 }
 
@@ -164,13 +208,7 @@ int send_command(const char *arg1, const char *arg2) {
 
     // Construction de l'URL HTTP du serveur
     char http_url[512];
-    if (strncmp(WS_URL, "ws://", 5) == 0) {
-        snprintf(http_url, sizeof(http_url), "http%s", WS_URL + 2);
-    } else if (strncmp(WS_URL, "wss://", 6) == 0) {
-        snprintf(http_url, sizeof(http_url), "https%s", WS_URL + 3);
-    } else {
-        strncpy(http_url, WS_URL, sizeof(http_url));
-    }
+    build_http_url(http_url, sizeof(http_url));
 
     char command[2048];
     if (is_url) {
@@ -198,13 +236,7 @@ int send_command(const char *arg1, const char *arg2) {
 int send_update_command(const char *target_user) {
     // Construction de l'URL HTTP du serveur
     char http_url[512];
-    if (strncmp(WS_URL, "ws://", 5) == 0) {
-        snprintf(http_url, sizeof(http_url), "http%s", WS_URL + 2);
-    } else if (strncmp(WS_URL, "wss://", 6) == 0) {
-        snprintf(http_url, sizeof(http_url), "https%s", WS_URL + 3);
-    } else {
-        strncpy(http_url, WS_URL, sizeof(http_url));
-    }
+    build_http_url(http_url, sizeof(http_url));
 
     char command[2048];
     printf("Envoi de la commande de mise à jour à %s...\n", target_user);
@@ -225,13 +257,7 @@ int send_update_command(const char *target_user) {
 int send_list_command() {
     // Construction de l'URL HTTP du serveur
     char http_url[512];
-    if (strncmp(WS_URL, "ws://", 5) == 0) {
-        snprintf(http_url, sizeof(http_url), "http%s", WS_URL + 2);
-    } else if (strncmp(WS_URL, "wss://", 6) == 0) {
-        snprintf(http_url, sizeof(http_url), "https%s", WS_URL + 3);
-    } else {
-        strncpy(http_url, WS_URL, sizeof(http_url));
-    }
+    build_http_url(http_url, sizeof(http_url));
 
     char command[2048];
     printf("Récupération de la liste des clients connectés...\n");
@@ -240,4 +266,44 @@ int send_list_command() {
     int ret = system(command);
     printf("\n");
     return (ret == 0) ? 0 : 1;
+}
+
+int send_showdesktop_command(const char *target_user) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande showdesktop (Super+D) à %s...\n", target_user);
+    snprintf(command, sizeof(command), 
+             "curl -s \"%s/api/showdesktop?id=%s\"", 
+             http_url, target_user);
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande showdesktop envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande showdesktop.\n");
+        return 1;
+    }
+}
+
+int send_key_command(const char *target_user, const char *combo) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi du raccourci '%s' à %s...\n", combo, target_user);
+    snprintf(command, sizeof(command), 
+             "curl -s \"%s/api/key?id=%s&combo=%s\"", 
+             http_url, target_user, combo);
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande key envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande key.\n");
+        return 1;
+    }
 }
