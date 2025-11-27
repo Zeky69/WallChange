@@ -4,7 +4,7 @@
 #include <signal.h>
 #include <time.h>
 
-#define VERSION "1.0.11"
+#define VERSION "1.0.12"
 
 static int interrupted = 0;
 
