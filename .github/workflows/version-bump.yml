@@ -24,4 +24,4 @@ jobs:
             git pull origin master
             make clean && make server
             pm2 restart wallchange
-            echo "✓ Server updated and restarted"
+            echo "✓ Server updated and restarted!"
