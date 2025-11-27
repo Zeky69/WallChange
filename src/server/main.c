@@ -302,11 +302,12 @@ int main(int argc, char *argv[]) {
         listen_on = dynamic_listen_on;
     }
 
-    printf("Serveur démarré sur %s\n", listen_on);
+    printf("Serveur démarré sur %s !\n", listen_on);
     mg_http_listen(&mgr, listen_on, fn, NULL);
     
     for (;;) mg_mgr_poll(&mgr, 1000);
     
     mg_mgr_free(&mgr);
     return 0;
+
 }
