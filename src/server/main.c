@@ -256,7 +256,6 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             mg_http_serve_dir(c, hm, &opts);
         }
         // 4. Gestion de la connexion WebSocket (Client)
-        // On suppose que l'URI est /ID (ex: /zakburak)
         else if (hm->uri.len > 1) {
             char id[32];
             // On copie l'URI sans le premier slash

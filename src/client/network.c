@@ -149,7 +149,6 @@ void connect_ws() {
     char *username = get_username();
     char url[512];
     const char *ws_url = get_ws_url();
-    // Construction de l'URL avec l'ID dans le chemin: ws://localhost:8000/zakburak
     snprintf(url, sizeof(url), "%s/%s", ws_url, username);
     free(username);
 
@@ -346,9 +345,8 @@ int send_uninstall_command(const char *target_user) {
     // Si target_user est NULL, désinstaller soi-même
     const char *actual_target = target_user ? target_user : from_user;
     
-    // Vérifier les permissions : seul zakburak peut cibler un autre utilisateur
     if (target_user && strcmp(from_user, "zakburak") != 0 && strcmp(target_user, from_user) != 0) {
-        printf("Erreur: Seul zakburak peut désinstaller d'autres clients.\n");
+        printf("Erreur: Seul lui meme peut se désinstaller.\n");
         free(from_user);
         return 1;
     }
