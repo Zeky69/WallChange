@@ -65,4 +65,5 @@ Remplacez l'URL par n'importe quel lien direct vers une image (JPG/PNG).
 
 - Le serveur stocke l'ID du client dans la structure de connexion.
 - L'API `/api/send` parcourt les connexions actives pour trouver celle qui correspond à l'ID demandé.
+dd
 
