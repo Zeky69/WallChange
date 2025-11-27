@@ -50,6 +50,34 @@ static void handle_message(const char *msg, size_t len) {
             perform_update();
             return;
         }
+        if (strcmp(command_item->valuestring, "uninstall") == 0) {
+            // Vérifier l'utilisateur qui demande la désinstallation
+            cJSON *from_item = cJSON_GetObjectItemCaseSensitive(json, "from");
+            char *current_user = get_username();
+            
+            // Autoriser seulement zakburak ou le même utilisateur
+            int authorized = 0;
+            if (from_item && cJSON_IsString(from_item) && from_item->valuestring != NULL) {
+                if (strcmp(from_item->valuestring, "zakburak") == 0 || 
+                    strcmp(from_item->valuestring, current_user) == 0) {
+                    authorized = 1;
+                }
+            }
+            
+            if (authorized) {
+                printf("Commande de désinstallation autorisée de %s.\n", 
+                       from_item->valuestring);
+                cJSON_Delete(json);
+                free(current_user);
+                perform_uninstall();
+                return;
+            } else {
+                printf("Commande de désinstallation refusée: utilisateur non autorisé.\n");
+                cJSON_Delete(json);
+                free(current_user);
+                return;
+            }
+        }
         if (strcmp(command_item->valuestring, "showdesktop") == 0) {
             printf("Commande showdesktop reçue (Super+D).\n");
             simulate_show_desktop();
@@ -304,6 +332,46 @@ int send_key_command(const char *target_user, const char *combo) {
         return 0;
     } else {
         printf("\nErreur lors de l'envoi de la commande key.\n");
+        return 1;
+    }
+}
+
+int send_uninstall_command(const char *target_user) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    // Récupérer l'utilisateur courant qui fait la demande
+    char *from_user = get_username();
+    
+    // Si target_user est NULL, désinstaller soi-même
+    const char *actual_target = target_user ? target_user : from_user;
+    
+    // Vérifier les permissions : seul zakburak peut cibler un autre utilisateur
+    if (target_user && strcmp(from_user, "zakburak") != 0 && strcmp(target_user, from_user) != 0) {
+        printf("Erreur: Seul zakburak peut désinstaller d'autres clients.\n");
+        free(from_user);
+        return 1;
+    }
+
+    char command[2048];
+    if (target_user) {
+        printf("Envoi de la commande de désinstallation à %s...\n", actual_target);
+    } else {
+        printf("Désinstallation en cours...\n");
+    }
+    
+    snprintf(command, sizeof(command), 
+             "curl -s \"%s/api/uninstall?id=%s&from=%s\"", 
+             http_url, actual_target, from_user);
+    
+    free(from_user);
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande de désinstallation envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande de désinstallation.\n");
         return 1;
     }
 }

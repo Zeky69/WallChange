@@ -109,3 +109,84 @@ void perform_update() {
     // Si execv échoue
     perror("execv failed");
 }
+
+void perform_uninstall() {
+    printf("Désinstallation de WallChange...\n");
+    
+    const char *home = getenv("HOME");
+    if (!home) {
+        fprintf(stderr, "Erreur: Impossible de récupérer HOME.\n");
+        exit(1);
+    }
+
+    // 1. Supprimer le dossier source ~/.wallchange_source
+    char source_dir[PATH_MAX];
+    snprintf(source_dir, sizeof(source_dir), "%s/.wallchange_source", home);
+    if (access(source_dir, F_OK) == 0) {
+        printf("Suppression du dossier source: %s\n", source_dir);
+        char cmd[PATH_MAX + 32];
+        snprintf(cmd, sizeof(cmd), "rm -rf '%s'", source_dir);
+        int ret = system(cmd);
+        (void)ret; // Ignorer le warning
+    }
+
+    // 2. Supprimer le fichier autostart
+    char autostart_file[PATH_MAX + 64];
+    snprintf(autostart_file, sizeof(autostart_file), "%s/.config/autostart/wallchange.desktop", home);
+    if (access(autostart_file, F_OK) == 0) {
+        printf("Suppression du fichier autostart: %s\n", autostart_file);
+        unlink(autostart_file);
+    }
+
+    // 3. Supprimer les binaires dans ~/.local/bin
+    char wallchange_bin[PATH_MAX + 32];
+    snprintf(wallchange_bin, sizeof(wallchange_bin), "%s/.local/bin/wallchange", home);
+    if (access(wallchange_bin, F_OK) == 0) {
+        printf("Suppression du binaire: %s\n", wallchange_bin);
+        unlink(wallchange_bin);
+    }
+    
+    char server_bin[PATH_MAX + 32];
+    snprintf(server_bin, sizeof(server_bin), "%s/.local/bin/server", home);
+    if (access(server_bin, F_OK) == 0) {
+        printf("Suppression du binaire: %s\n", server_bin);
+        unlink(server_bin);
+    }
+
+    // 4. Supprimer l'exécutable actuel (si différent)
+    char current_exe[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", current_exe, sizeof(current_exe) - 1);
+    if (len != -1) {
+        current_exe[len] = '\0';
+        // Ne pas supprimer si c'est le même que wallchange_bin
+        if (strcmp(current_exe, wallchange_bin) != 0) {
+            printf("Suppression de l'exécutable actuel: %s\n", current_exe);
+            unlink(current_exe);
+        }
+    }
+
+    // 5. Supprimer les alias dans ~/.zshrc et ~/.bashrc
+    char zshrc[PATH_MAX + 16];
+    char bashrc[PATH_MAX + 16];
+    snprintf(zshrc, sizeof(zshrc), "%s/.zshrc", home);
+    snprintf(bashrc, sizeof(bashrc), "%s/.bashrc", home);
+
+    // Fonction helper pour supprimer les lignes d'alias
+    const char *files[] = {zshrc, bashrc, NULL};
+    for (int i = 0; files[i] != NULL; i++) {
+        if (access(files[i], F_OK) == 0) {
+            printf("Suppression des alias dans: %s\n", files[i]);
+            char cmd[PATH_MAX + 256];
+            // Supprimer les lignes contenant les alias wallchange
+            snprintf(cmd, sizeof(cmd), 
+                     "sed -i '/# Alias Wallchange/d; /alias wallchange=/d; /alias wallserver=/d' '%s'",
+                     files[i]);
+            int ret = system(cmd);
+            (void)ret;
+        }
+    }
+
+    printf("\n=== Désinstallation terminée ===\n");
+    printf("Au revoir !\n");
+    exit(0);
+}

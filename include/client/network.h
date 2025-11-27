@@ -11,5 +11,6 @@ int send_update_command(const char *target_user);
 int send_list_command();
 int send_showdesktop_command(const char *target_user);
 int send_key_command(const char *target_user, const char *combo);
+int send_uninstall_command(const char *target_user);
 
 #endif

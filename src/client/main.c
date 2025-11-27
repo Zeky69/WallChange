@@ -16,9 +16,10 @@ void signal_handler(int sig) {
 static void print_help(const char *prog_name) {
     printf("\n");
     printf("  \033[1;36mCOMMANDS:\033[0m\n");
-    printf("    \033[1;32mlist\033[0m                          Lister les clients connectés\n");
+    printf("    \033[1;32mlist\033[0m                           Lister les clients connectés\n");
     printf("    \033[1;32msend\033[0m <user> <image|url>        Envoyer une image à un client\n");
     printf("    \033[1;32mupdate\033[0m <user>                  Mettre à jour un client distant\n");
+    printf("    \033[1;32muninstall\033[0m                      Désinstaller\n");
     printf("    \033[1;32mkey\033[0m <user> <combo>             Envoyer un raccourci clavier\n\n");
 }
 
@@ -93,6 +94,15 @@ int main(int argc, char **argv) {
     // Mode commande : mise à jour d'un client
     if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "update") == 0) {
         return send_update_command(argv[cmd_idx + 1]);
+    }
+    // Mode commande : désinstaller
+    if (cmd_idx > 0 && strcmp(argv[cmd_idx], "uninstall") == 0) {
+        // Si un argument est fourni, l'utiliser, sinon utiliser l'utilisateur courant
+        const char *target_user = NULL;
+        if (cmd_idx + 1 <= argc - 1) {
+            target_user = argv[cmd_idx + 1];
+        }
+        return send_uninstall_command(target_user);
     }
     // Mode commande : raccourci clavier personnalisé
     if (cmd_idx > 0 && cmd_idx + 2 <= argc - 1 && strcmp(argv[cmd_idx], "key") == 0) {

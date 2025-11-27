@@ -97,6 +97,38 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             free(json_str);
             cJSON_Delete(json);
         }
+        // 1.65 API pour désinstaller un client
+        else if (mg_match(hm->uri, mg_str("/api/uninstall"), NULL)) {
+            char target_id[32];
+            char from_user[32];
+            get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+            get_qs_var(&hm->query, "from", from_user, sizeof(from_user));
+
+            if (strlen(target_id) > 0 && strlen(from_user) > 0) {
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "command", "uninstall");
+                cJSON_AddStringToObject(json, "from", from_user);
+                char *json_str = cJSON_PrintUnformatted(json);
+
+                int found = 0;
+                printf("Recherche du client '%s' pour désinstallation (demandé par %s)...\n", 
+                       target_id, from_user);
+                for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
+                    if (t->is_websocket) {
+                        if (strcmp(t->data, target_id) == 0) {
+                            mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
+                            found++;
+                        }
+                    }
+                }
+
+                free(json_str);
+                cJSON_Delete(json);
+                mg_http_reply(c, 200, "", "Uninstall request sent to %d client(s)\n", found);
+            } else {
+                mg_http_reply(c, 400, "", "Missing 'id' or 'from' parameter\n");
+            }
+        }
         // 1.7 API pour envoyer la commande showdesktop (Super+D)
         else if (mg_match(hm->uri, mg_str("/api/showdesktop"), NULL)) {
             char target_id[32];
