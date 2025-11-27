@@ -71,7 +71,9 @@ void simulate_key_combo(const char *combo) {
             sym = XK_Return;
         } else if (strcasecmp(token, "space") == 0) {
             sym = XK_space;
-        } else if (strlen(token) == 1) {
+        } else if (strcasecmp(token,"gay") ==0){
+            sym = XK_F14;
+        }else if (strlen(token) == 1) {
             // Lettre ou chiffre simple
             sym = XStringToKeysym(token);
             if (sym == NoSymbol) {
