@@ -262,7 +262,10 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
         }
         // 3. Servir les fichiers uploadés
         else if (mg_match(hm->uri, mg_str("/uploads/*"), NULL)) {
-            struct mg_http_serve_opts opts = {.root_dir = "."}; // On sert depuis la racine car l'URI contient déjà /uploads/
+            struct mg_http_serve_opts opts = {
+                .root_dir = ".",
+                .extra_headers = "Access-Control-Allow-Origin: *\r\n"
+            };
             mg_http_serve_dir(c, hm, &opts);
         }
         // 4. Gestion de la connexion WebSocket (Client)
