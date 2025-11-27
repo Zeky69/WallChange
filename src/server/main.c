@@ -5,6 +5,7 @@
 
 static const char *s_listen_on = "ws://0.0.0.0:8000";
 static const char *s_upload_dir = "uploads";
+static const char *s_cors_headers = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n";
 
 // Fonction utilitaire pour récupérer un paramètre de la query string
 // Mongoose a mg_http_get_var mais on va le faire simplement
@@ -19,6 +20,11 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
     if (ev == MG_EV_HTTP_MSG) {
         struct mg_http_message *hm = (struct mg_http_message *) ev_data;
         
+        if (mg_match(hm->method, mg_str("OPTIONS"), NULL)) {
+            mg_http_reply(c, 200, s_cors_headers, "");
+            return;
+        }
+
         // 1. API pour envoyer une image (Admin / Script)
         if (mg_match(hm->uri, mg_str("/api/send"), NULL)) {
             char target_id[32];
@@ -45,9 +51,9 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 free(json_str);
                 cJSON_Delete(json);
                 
-                mg_http_reply(c, 200, "", "Sent to %d client(s)\n", found);
+                mg_http_reply(c, 200, s_cors_headers, "Sent to %d client(s)\n", found);
             } else {
-                mg_http_reply(c, 400, "", "Missing 'id' or 'url' parameter\n");
+                mg_http_reply(c, 400, s_cors_headers, "Missing 'id' or 'url' parameter\n");
             }
         }
         // 1.5 API pour demander une mise à jour au client
@@ -77,14 +83,14 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 free(json_str);
                 cJSON_Delete(json);
 
-                mg_http_reply(c, 200, "", "Update request sent to %d client(s)\n", found);
+                mg_http_reply(c, 200, s_cors_headers, "Update request sent to %d client(s)\n", found);
             } else {
-                mg_http_reply(c, 400, "", "Missing 'id' parameter\n");
+                mg_http_reply(c, 400, s_cors_headers, "Missing 'id' parameter\n");
             }
         }
         // 1.55 API pour obtenir la version du serveur
         else if (mg_match(hm->uri, mg_str("/api/version"), NULL)) {
-            mg_http_reply(c, 200, "Content-Type: text/plain\r\n", "1.0.18");
+            mg_http_reply(c, 200, "Content-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\n", "1.0.18");
         }
         // 1.6 API pour lister les clients connectés
         else if (mg_match(hm->uri, mg_str("/api/list"), NULL)) {
@@ -97,7 +103,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 }
             }
             char *json_str = cJSON_PrintUnformatted(json);
-            mg_http_reply(c, 200, "Content-Type: application/json\r\n", "%s", json_str);
+            mg_http_reply(c, 200, "Content-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\n", "%s", json_str);
             free(json_str);
             cJSON_Delete(json);
         }
@@ -128,9 +134,9 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
 
                 free(json_str);
                 cJSON_Delete(json);
-                mg_http_reply(c, 200, "", "Uninstall request sent to %d client(s)\n", found);
+                mg_http_reply(c, 200, s_cors_headers, "Uninstall request sent to %d client(s)\n", found);
             } else {
-                mg_http_reply(c, 400, "", "Missing 'id' or 'from' parameter\n");
+                mg_http_reply(c, 400, s_cors_headers, "Missing 'id' or 'from' parameter\n");
             }
         }
         // 1.7 API pour envoyer la commande showdesktop (Super+D)
@@ -153,9 +159,9 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
 
                 free(json_str);
                 cJSON_Delete(json);
-                mg_http_reply(c, 200, "", "Showdesktop sent to %d client(s)\n", found);
+                mg_http_reply(c, 200, s_cors_headers, "Showdesktop sent to %d client(s)\n", found);
             } else {
-                mg_http_reply(c, 400, "", "Missing 'id' parameter\n");
+                mg_http_reply(c, 400, s_cors_headers, "Missing 'id' parameter\n");
             }
         }
         // 1.8 API pour envoyer un raccourci clavier personnalisé
@@ -181,9 +187,9 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
 
                 free(json_str);
                 cJSON_Delete(json);
-                mg_http_reply(c, 200, "", "Key '%s' sent to %d client(s)\n", combo, found);
+                mg_http_reply(c, 200, s_cors_headers, "Key '%s' sent to %d client(s)\n", combo, found);
             } else {
-                mg_http_reply(c, 400, "", "Missing 'id' or 'combo' parameter\n");
+                mg_http_reply(c, 400, s_cors_headers, "Missing 'id' or 'combo' parameter\n");
             }
         }
         // 2. API pour uploader une image
@@ -246,12 +252,12 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                     free(json_str);
                     cJSON_Delete(json);
                     
-                    mg_http_reply(c, 200, "", "Uploaded and sent to %d client(s)\n", found);
+                    mg_http_reply(c, 200, s_cors_headers, "Uploaded and sent to %d client(s)\n", found);
                 } else {
-                    mg_http_reply(c, 200, "", "Uploaded but no target id provided\n");
+                    mg_http_reply(c, 200, s_cors_headers, "Uploaded but no target id provided\n");
                 }
             } else {
-                mg_http_reply(c, 400, "", "No file found in request\n");
+                mg_http_reply(c, 400, s_cors_headers, "No file found in request\n");
             }
         }
         // 3. Servir les fichiers uploadés
@@ -272,7 +278,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
         }
         // Page d'accueil simple
         else {
-            mg_http_reply(c, 200, "Content-Type: text/html\r\n", 
+            mg_http_reply(c, 200, "Content-Type: text/html\r\nAccess-Control-Allow-Origin: *\r\n", 
                 "<h1>Wallchange Server</h1>"
                 "<p>Utilisez /api/send?id=USER&url=URL pour changer le fond d'ecran.</p>");
         }
