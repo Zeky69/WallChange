@@ -7,61 +7,6 @@ static const char *s_listen_on = "ws://0.0.0.0:8000";
 static const char *s_upload_dir = "uploads";
 static const char *s_cors_headers = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n";
 
-// Rate limiting
-#define RL_COOLDOWN_SEC 0.5
-#define MAX_RL_CLIENTS 50
-
-struct rl_entry {
-    unsigned long ip;
-    double last_time;
-};
-
-static struct rl_entry s_rl_entries[MAX_RL_CLIENTS];
-
-static unsigned long get_client_ip(struct mg_connection *c, struct mg_http_message *hm) {
-    struct mg_str *h = mg_http_get_header(hm, "X-Forwarded-For");
-    if (h != NULL && h->len > 0) {
-        unsigned long hash = 5381;
-        for (size_t i = 0; i < h->len; i++) {
-            if (h->buf[i] == ',' || h->buf[i] == ' ') break;
-            hash = ((hash << 5) + hash) + h->buf[i];
-        }
-        return hash;
-    }
-    // Hash the IP address from c->rem.ip (uint8_t[16])
-    unsigned long hash = 5381;
-    for (int i = 0; i < 16; i++) {
-        hash = ((hash << 5) + hash) + c->rem.ip[i];
-    }
-    return hash;
-}
-
-static int is_rate_limited(unsigned long ip) {
-    double now = (double)mg_millis() / 1000.0;
-    for (int i = 0; i < MAX_RL_CLIENTS; i++) {
-        if (s_rl_entries[i].ip == ip) {
-            if (now - s_rl_entries[i].last_time < RL_COOLDOWN_SEC) {
-                return 1; // Limited
-            }
-            s_rl_entries[i].last_time = now;
-            return 0; // Allowed
-        }
-    }
-    // Find empty slot
-    for (int i = 0; i < MAX_RL_CLIENTS; i++) {
-        if (s_rl_entries[i].ip == 0) {
-            s_rl_entries[i].ip = ip;
-            s_rl_entries[i].last_time = now;
-            return 0;
-        }
-    }
-    // Overwrite random (using time as random-ish index)
-    int idx = (int)(now * 1000) % MAX_RL_CLIENTS;
-    s_rl_entries[idx].ip = ip;
-    s_rl_entries[idx].last_time = now;
-    return 0;
-}
-
 // Target Rate limiting
 #define TARGET_RL_COOLDOWN_SEC 2.0
 #define MAX_TARGET_RL_CLIENTS 100
@@ -115,15 +60,6 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
         if (mg_match(hm->method, mg_str("OPTIONS"), NULL)) {
             mg_http_reply(c, 200, s_cors_headers, "");
             return;
-        }
-
-        // Rate limiting check for API calls
-        if (mg_match(hm->uri, mg_str("/api/*"), NULL)) {
-             unsigned long ip = get_client_ip(c, hm);
-             if (is_rate_limited(ip)) {
-                 mg_http_reply(c, 429, s_cors_headers, "Too Many Requests\n");
-                 return;
-             }
         }
 
         // 1. API pour envoyer une image (Admin / Script)
