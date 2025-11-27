@@ -82,7 +82,6 @@ void simulate_key_combo(const char *combo) {
                 sym = XStringToKeysym(lower);
             }
         } else {
-            // Essayer directement
             sym = XStringToKeysym(token);
         }
 
