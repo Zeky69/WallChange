@@ -75,7 +75,6 @@ void simulate_key_combo(const char *combo) {
             // Lettre ou chiffre simple
             sym = XStringToKeysym(token);
             if (sym == NoSymbol) {
-                // Essayer en minuscule
                 char lower[2] = {token[0], '\0'};
                 if (lower[0] >= 'A' && lower[0] <= 'Z') {
                     lower[0] = lower[0] + 32;
