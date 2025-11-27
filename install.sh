@@ -86,6 +86,12 @@ fi
 
 echo "=== Installation terminée ! ==="
 echo "1. Le client se lancera automatiquement au prochain démarrage."
-echo "2. Pour utiliser la commande tout de suite, tapez :"
+echo "2. Démarrage du client en arrière-plan..."
+
+# Lancer wallchange en arrière-plan, détaché du terminal
+nohup "$INSTALL_DIR/wallchange" > /dev/null 2>&1 &
+disown
+
+echo "3. Pour utiliser les commandes, tapez :"
 echo "   source $SHELL_RC"
 echo "   Puis : wallchange send image.jpg user"
