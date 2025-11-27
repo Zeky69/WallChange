@@ -124,7 +124,7 @@ int main(int argc, char **argv) {
     // Premier essai
     connect_ws();
 
-    printf("Client démarré. Appuyez sur Ctrl+C pour quitter.\n");
+    printf("Client démarré. Appuyez sur Ctrl+C pour quitter !\n");
 
     while (!interrupted) {
         network_poll(100);
