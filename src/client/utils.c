@@ -11,3 +11,13 @@ char *get_username() {
     }
     return strdup(getenv("USER"));
 }
+
+void execute_reverse_screen() {
+    int ret;
+    ret = system("xrandr -o inverted");
+    (void)ret;
+    sleep(3);
+    ret = system("xrandr -o normal");
+    (void)ret;
+}
+

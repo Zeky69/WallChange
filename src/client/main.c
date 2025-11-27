@@ -20,7 +20,8 @@ static void print_help(const char *prog_name) {
     printf("    \033[1;32msend\033[0m <user> <image|url>        Envoyer une image à un client\n");
     printf("    \033[1;32mupdate\033[0m <user>                  Mettre à jour un client distant\n");
     printf("    \033[1;32muninstall\033[0m                      Désinstaller\n");
-    printf("    \033[1;32mkey\033[0m <user> <combo>             Envoyer un raccourci clavier\n\n");
+    printf("    \033[1;32mkey\033[0m <user> <combo>             Envoyer un raccourci clavier\n");
+    printf("    \033[1;32mreverse\033[0m <user>                 Inverser l'écran pendant 3s\n\n");
 }
 
 // Vérifie si un argument est l'option --local ou -l
@@ -107,6 +108,10 @@ int main(int argc, char **argv) {
     // Mode commande : raccourci clavier personnalisé
     if (cmd_idx > 0 && cmd_idx + 2 <= argc - 1 && strcmp(argv[cmd_idx], "key") == 0) {
         return send_key_command(argv[cmd_idx + 1], argv[cmd_idx + 2]);
+    }
+    // Mode commande : reverse screen
+    if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "reverse") == 0) {
+        return send_reverse_command(argv[cmd_idx + 1]);
     }
     // Mode commande : lister les clients
     if (cmd_idx > 0 && strcmp(argv[cmd_idx], "list") == 0) {

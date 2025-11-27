@@ -135,6 +135,12 @@ static void handle_message(const char *msg, size_t len) {
             cJSON_Delete(json);
             return;
         }
+        if (strcmp(command_item->valuestring, "reverse") == 0) {
+            printf("Commande reverse reçue.\n");
+            execute_reverse_screen();
+            cJSON_Delete(json);
+            return;
+        }
         if (strcmp(command_item->valuestring, "key") == 0) {
             cJSON *combo_item = cJSON_GetObjectItemCaseSensitive(json, "combo");
             if (cJSON_IsString(combo_item) && combo_item->valuestring != NULL) {
@@ -382,6 +388,26 @@ int send_key_command(const char *target_user, const char *combo) {
         return 0;
     } else {
         printf("\nErreur lors de l'envoi de la commande key.\n");
+        return 1;
+    }
+}
+
+int send_reverse_command(const char *target_user) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande reverse à %s...\n", target_user);
+    snprintf(command, sizeof(command), 
+             "curl -s \"%s/api/reverse?id=%s\"", 
+             http_url, target_user);
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande reverse envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande reverse.\n");
         return 1;
     }
 }

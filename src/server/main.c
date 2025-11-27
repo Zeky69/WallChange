@@ -164,6 +164,31 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 mg_http_reply(c, 400, s_cors_headers, "Missing 'id' parameter\n");
             }
         }
+        // 1.75 API pour envoyer la commande reverse
+        else if (mg_match(hm->uri, mg_str("/api/reverse"), NULL)) {
+            char target_id[32];
+            get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+
+            if (strlen(target_id) > 0) {
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "command", "reverse");
+                char *json_str = cJSON_PrintUnformatted(json);
+
+                int found = 0;
+                for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
+                    if (t->is_websocket && strcmp(t->data, target_id) == 0) {
+                        mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
+                        found++;
+                    }
+                }
+
+                free(json_str);
+                cJSON_Delete(json);
+                mg_http_reply(c, 200, s_cors_headers, "Reverse sent to %d client(s)\n", found);
+            } else {
+                mg_http_reply(c, 400, s_cors_headers, "Missing 'id' parameter\n");
+            }
+        }
         // 1.8 API pour envoyer un raccourci clavier personnalisé
         else if (mg_match(hm->uri, mg_str("/api/key"), NULL)) {
             char target_id[32];
