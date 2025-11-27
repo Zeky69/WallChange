@@ -84,7 +84,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
         }
         // 1.55 API pour obtenir la version du serveur
         else if (mg_match(hm->uri, mg_str("/api/version"), NULL)) {
-            mg_http_reply(c, 200, "Content-Type: text/plain\r\n", "1.0.10");
+            mg_http_reply(c, 200, "Content-Type: text/plain\r\n", "1.0.11");
         }
         // 1.6 API pour lister les clients connectés
         else if (mg_match(hm->uri, mg_str("/api/list"), NULL)) {
