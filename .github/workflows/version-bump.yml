@@ -1,4 +1,4 @@
-name: Auto Version Bump
+name: Auto Deploy Server
 
 on:
   push:
@@ -8,7 +8,6 @@ on:
 jobs:
   deploy-server:
     runs-on: ubuntu-latest
-    needs: bump-version
     steps:
       - name: Deploy to server
         uses: appleboy/ssh-action@master
