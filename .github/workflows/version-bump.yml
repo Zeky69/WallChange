@@ -1,0 +1,49 @@
+name: Auto Version Bump
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Extract current version
+        id: current
+        run: |
+          VERSION=$(grep -oP '#define VERSION "\K[^"]+' src/client/main.c)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Bump version
+        id: bump
+        run: |
+          IFS='.' read -r -a parts <<< "${{ steps.current.outputs.version }}"
+          major="${parts[0]}"
+          minor="${parts[1]}"
+          patch="${parts[2]}"
+          patch=$((patch + 1))
+          NEW_VERSION="$major.$minor.$patch"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+
+      - name: Update version in files
+        run: |
+          OLD="${{ steps.current.outputs.version }}"
+          NEW="${{ steps.bump.outputs.new_version }}"
+          sed -i "s/#define VERSION \"$OLD\"/#define VERSION \"$NEW\"/" src/client/main.c
+          sed -i "s/\"$OLD\"/\"$NEW\"/" src/server/main.c
+
+      - name: Commit and push
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add src/client/main.c src/server/main.c
+          git diff --cached --quiet || git commit -m "chore: bump version to ${{ steps.bump.outputs.new_version }}"
+          git push

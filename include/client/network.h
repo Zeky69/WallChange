@@ -2,6 +2,7 @@
 #define NETWORK_H
 
 void set_local_mode(int enabled);
+void check_and_update_version(const char *client_version);
 void init_network();
 void cleanup_network();
 void connect_ws();

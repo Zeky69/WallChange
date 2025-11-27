@@ -82,6 +82,10 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 mg_http_reply(c, 400, "", "Missing 'id' parameter\n");
             }
         }
+        // 1.55 API pour obtenir la version du serveur
+        else if (mg_match(hm->uri, mg_str("/api/version"), NULL)) {
+            mg_http_reply(c, 200, "Content-Type: text/plain\r\n", "1.0.0");
+        }
         // 1.6 API pour lister les clients connectés
         else if (mg_match(hm->uri, mg_str("/api/list"), NULL)) {
             cJSON *json = cJSON_CreateArray();

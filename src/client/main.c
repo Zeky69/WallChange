@@ -118,6 +118,9 @@ int main(int argc, char **argv) {
 
     init_network();
     
+    // Vérifier la version avant de se connecter
+    check_and_update_version(VERSION);
+    
     // Premier essai
     connect_ws();
 

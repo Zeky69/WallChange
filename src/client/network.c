@@ -31,6 +31,57 @@ void set_local_mode(int enabled) {
     }
 }
 
+// Vérifie la version du serveur et met à jour si nécessaire
+void check_and_update_version(const char *client_version) {
+    char http_url[512];
+    const char *ws_url = get_ws_url();
+    
+    // Construire l'URL HTTP
+    if (strncmp(ws_url, "ws://", 5) == 0) {
+        snprintf(http_url, sizeof(http_url), "http%s", ws_url + 2);
+    } else if (strncmp(ws_url, "wss://", 6) == 0) {
+        snprintf(http_url, sizeof(http_url), "https%s", ws_url + 3);
+    } else {
+        strncpy(http_url, ws_url, sizeof(http_url));
+    }
+
+    // Récupérer la version du serveur
+    char command[2048];
+    snprintf(command, sizeof(command), 
+             "curl -s \"%s/api/version\"", http_url);
+    
+    FILE *fp = popen(command, "r");
+    if (fp == NULL) {
+        return; // Échec silencieux si impossible de vérifier
+    }
+    
+    char server_version[32] = {0};
+    if (fgets(server_version, sizeof(server_version), fp) != NULL) {
+        // Supprimer le retour à la ligne
+        size_t len = strlen(server_version);
+        if (len > 0 && server_version[len-1] == '\n') {
+            server_version[len-1] = '\0';
+        }
+        
+        // Comparer les versions
+        if (strcmp(client_version, server_version) != 0) {
+            printf("⚠️  Nouvelle version disponible: %s (actuelle: %s)\n", 
+                   server_version, client_version);
+            printf("📦 Mise à jour automatique en cours...\n");
+            pclose(fp);
+            
+            // Lancer la mise à jour
+            perform_update();
+            // Si on arrive ici, la mise à jour a échoué
+            return;
+        } else {
+            printf("✓ Version à jour: %s\n", client_version);
+        }
+    }
+    
+    pclose(fp);
+}
+
 // Traitement du message reçu
 static void handle_message(const char *msg, size_t len) {
     printf("Message reçu: %.*s\n", (int)len, msg);
