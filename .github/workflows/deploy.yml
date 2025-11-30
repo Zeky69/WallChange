@@ -22,5 +22,8 @@ jobs:
             git fetch origin master
             git reset --hard origin/master
             make clean && make server
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
             pm2 restart wallchange
             echo "✓ Server updated and restarted !"
+
