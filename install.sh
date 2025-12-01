@@ -49,7 +49,6 @@ pkill wallchange || true
 sleep 1
 
 cp wallchange "$INSTALL_DIR/"
-cp server "$INSTALL_DIR/"
 
 # 4. Configuration du lancement automatique
 echo "[4/5] Configuration du démarrage automatique..."
@@ -79,7 +78,6 @@ if ! grep -q "alias wallchange=" "$SHELL_RC"; then
     echo "" >> "$SHELL_RC"
     echo "# Alias Wallchange" >> "$SHELL_RC"
     echo "alias wallchange='$INSTALL_DIR/wallchange'" >> "$SHELL_RC"
-    echo "alias wallserver='$INSTALL_DIR/server'" >> "$SHELL_RC"
 else
     echo "L'alias 'wallchange' existe déjà."
 fi
