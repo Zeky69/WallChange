@@ -12,7 +12,7 @@ static const char *s_upload_dir = "uploads";
 static const char *s_cors_headers = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n";
 
 // Target Rate limiting
-#define TARGET_RL_COOLDOWN_SEC 2.0
+#define TARGET_RL_COOLDOWN_SEC 10.0
 #define MAX_TARGET_RL_CLIENTS 100
 
 struct target_rl_entry {
