@@ -2,4 +2,4 @@ wallchange
 *.o
 uploads/
 .vscode/
-server
+/server
