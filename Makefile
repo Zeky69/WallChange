@@ -1,5 +1,6 @@
 CC = gcc
-CFLAGS = -O2 -DMG_TLS=2 -Iinclude -Isrc/common
+VERSION := $(shell cat VERSION)
+CFLAGS = -O2 -DMG_TLS=2 -Iinclude -Isrc/common -DVERSION=\"$(VERSION)\"
 LDFLAGS = -lssl -lcrypto
 LDFLAGS_CLIENT = $(LDFLAGS) -lX11 -lXtst
 

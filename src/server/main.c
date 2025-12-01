@@ -3,6 +3,10 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#ifndef VERSION
+#define VERSION "0.0.0"
+#endif
+
 static const char *s_listen_on = "ws://0.0.0.0:8000";
 static const char *s_upload_dir = "uploads";
 static const char *s_cors_headers = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n";
@@ -137,7 +141,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
         }
         // 1.55 API pour obtenir la version du serveur
         else if (mg_match(hm->uri, mg_str("/api/version"), NULL)) {
-            mg_http_reply(c, 200, "Content-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\n", "1.0.27");
+            mg_http_reply(c, 200, "Content-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\n", VERSION);
         }
         // 1.6 API pour lister les clients connectés
         else if (mg_match(hm->uri, mg_str("/api/list"), NULL)) {

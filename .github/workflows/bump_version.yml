@@ -1,0 +1,37 @@
+name: Bump Version
+
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - 'README.md'
+      - '.github/workflows/**'
+
+jobs:
+  bump-version:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Setup Git
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+    - name: Bump Version
+      run: |
+        chmod +x bump_version.sh
+        ./bump_version.sh patch
+
+    - name: Commit and Push
+      run: |
+        git add VERSION
+        git commit -m "chore: bump version [skip ci]"
+        git push
