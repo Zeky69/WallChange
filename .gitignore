@@ -3,3 +3,5 @@ wallchange
 uploads/
 .vscode/
 /server
+.admin_credentials
+.wallchange_token

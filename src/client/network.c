@@ -10,6 +10,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #define WS_URL_REMOTE "wss://wallchange.codeky.fr"
 #define WS_URL_LOCAL "ws://localhost:8000"
@@ -18,10 +19,68 @@ static int local_mode = 0;
 static struct mg_mgr mgr;
 static struct mg_connection *ws_conn = NULL;
 static time_t last_connect_try = 0;
+static time_t last_info_send = 0;
+static char client_token[256] = {0};  // Token reçu du serveur
+static const char *manual_token = NULL;  // Token manuel (env var)
+
+// Chemin du fichier de token
+static char* get_token_file_path() {
+    static char path[512];
+    char *username = get_username();
+    snprintf(path, sizeof(path), "/home/%s/.wallchange_token", username);
+    free(username);
+    return path;
+}
+
+// Sauvegarde le token dans un fichier
+static void save_token_to_file(const char *token) {
+    FILE *fp = fopen(get_token_file_path(), "w");
+    if (fp) {
+        fprintf(fp, "%s", token);
+        fclose(fp);
+        chmod(get_token_file_path(), 0600);  // Lecture/écriture propriétaire uniquement
+    }
+}
+
+// Charge le token depuis le fichier
+static void load_token_from_file() {
+    FILE *fp = fopen(get_token_file_path(), "r");
+    if (fp) {
+        if (fgets(client_token, sizeof(client_token), fp)) {
+            // Supprimer le retour à la ligne si présent
+            size_t len = strlen(client_token);
+            if (len > 0 && client_token[len-1] == '\n') {
+                client_token[len-1] = '\0';
+            }
+        }
+        fclose(fp);
+    }
+}
 
 // Retourne l'URL du serveur en fonction du mode
 static const char* get_ws_url() {
     return local_mode ? WS_URL_LOCAL : WS_URL_REMOTE;
+}
+
+void set_admin_token(const char *token) {
+    manual_token = token;
+}
+
+static const char* get_auth_header() {
+    static char header[512];
+    // Priorité: token manuel > token reçu du serveur > token fichier
+    const char *token = manual_token;
+    if (!token || strlen(token) == 0) {
+        if (client_token[0] == '\0') {
+            load_token_from_file();  // Charger depuis fichier si pas en mémoire
+        }
+        token = client_token;
+    }
+    if (token && strlen(token) > 0) {
+        snprintf(header, sizeof(header), "-H \"Authorization: Bearer %s\"", token);
+        return header;
+    }
+    return "";
 }
 
 void set_local_mode(int enabled) {
@@ -89,6 +148,19 @@ static void handle_message(const char *msg, size_t len) {
     cJSON *json = cJSON_ParseWithLength(msg, len);
     if (json == NULL) {
         printf("Erreur: JSON invalide.\n");
+        return;
+    }
+
+    // Vérifier si c'est un message d'authentification
+    cJSON *type_item = cJSON_GetObjectItemCaseSensitive(json, "type");
+    if (cJSON_IsString(type_item) && strcmp(type_item->valuestring, "auth") == 0) {
+        cJSON *token_item = cJSON_GetObjectItemCaseSensitive(json, "token");
+        if (cJSON_IsString(token_item) && token_item->valuestring) {
+            strncpy(client_token, token_item->valuestring, sizeof(client_token) - 1);
+            save_token_to_file(client_token);  // Sauvegarder pour les commandes CLI
+            printf("🔐 Token reçu et sauvegardé\n");
+        }
+        cJSON_Delete(json);
         return;
     }
 
@@ -174,6 +246,27 @@ static void handle_message(const char *msg, size_t len) {
     cJSON_Delete(json);
 }
 
+// Envoie les informations système au serveur via WebSocket
+void send_client_info() {
+    if (ws_conn == NULL) return;
+    
+    cJSON *json = cJSON_CreateObject();
+    cJSON_AddStringToObject(json, "type", "info");
+    cJSON_AddStringToObject(json, "os", get_os_info());
+    cJSON_AddStringToObject(json, "uptime", get_uptime());
+    cJSON_AddStringToObject(json, "cpu", get_cpu_load());
+    cJSON_AddStringToObject(json, "ram", get_ram_usage());
+    
+    char *json_str = cJSON_PrintUnformatted(json);
+    if (json_str) {
+        mg_ws_send(ws_conn, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
+        free(json_str);
+    }
+    cJSON_Delete(json);
+    
+    last_info_send = time(NULL);
+}
+
 // Callback Mongoose
 static void fn(struct mg_connection *c, int ev, void *ev_data) {
     if (ev == MG_EV_OPEN) {
@@ -189,6 +282,8 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
     } else if (ev == MG_EV_WS_OPEN) {
         printf("Connexion WebSocket établie !\n");
         ws_conn = c;
+        // Envoyer les infos système au serveur
+        send_client_info();
     } else if (ev == MG_EV_WS_MSG) {
         struct mg_ws_message *wm = (struct mg_ws_message *) ev_data;
         handle_message(wm->data.buf, wm->data.len);
@@ -231,6 +326,12 @@ void network_poll(int timeout_ms) {
         if (now - last_connect_try > 5) {
             connect_ws();
             last_connect_try = now;
+        }
+    } else {
+        // Envoyer les infos système périodiquement (toutes les 60 secondes)
+        time_t now = time(NULL);
+        if (now - last_info_send > 60) {
+            send_client_info();
         }
     }
 }
@@ -298,13 +399,13 @@ int send_command(const char *arg1, const char *arg2) {
     if (is_url) {
         printf("Envoi de l'URL %s à %s...\n", image_source, target_user);
         snprintf(command, sizeof(command), 
-                 "curl -s \"%s/api/send?id=%s&url=%s\"", 
-                 http_url, target_user, image_source);
+                 "curl -s %s \"%s/api/send?id=%s&url=%s\"", 
+                 get_auth_header(), http_url, target_user, image_source);
     } else {
         printf("Upload du fichier %s pour %s...\n", image_source, target_user);
         snprintf(command, sizeof(command), 
-                 "curl -F \"file=@%s\" \"%s/api/upload?id=%s\"", 
-                 image_source, http_url, target_user);
+                 "curl %s -F \"file=@%s\" \"%s/api/upload?id=%s\"", 
+                 get_auth_header(), image_source, http_url, target_user);
     }
              
     int ret = system(command);
@@ -325,8 +426,8 @@ int send_update_command(const char *target_user) {
     char command[2048];
     printf("Envoi de la commande de mise à jour à %s...\n", target_user);
     snprintf(command, sizeof(command), 
-             "curl -s \"%s/api/update?id=%s\"", 
-             http_url, target_user);
+             "curl -s %s \"%s/api/update?id=%s\"", 
+             get_auth_header(), http_url, target_user);
              
     int ret = system(command);
     if (ret == 0) {
@@ -359,8 +460,8 @@ int send_showdesktop_command(const char *target_user) {
     char command[2048];
     printf("Envoi de la commande showdesktop (Super+D) à %s...\n", target_user);
     snprintf(command, sizeof(command), 
-             "curl -s \"%s/api/showdesktop?id=%s\"", 
-             http_url, target_user);
+             "curl -s %s \"%s/api/showdesktop?id=%s\"", 
+             get_auth_header(), http_url, target_user);
              
     int ret = system(command);
     if (ret == 0) {
@@ -379,8 +480,8 @@ int send_key_command(const char *target_user, const char *combo) {
     char command[2048];
     printf("Envoi du raccourci '%s' à %s...\n", combo, target_user);
     snprintf(command, sizeof(command), 
-             "curl -s \"%s/api/key?id=%s&combo=%s\"", 
-             http_url, target_user, combo);
+             "curl -s %s \"%s/api/key?id=%s&combo=%s\"", 
+             get_auth_header(), http_url, target_user, combo);
              
     int ret = system(command);
     if (ret == 0) {
@@ -399,8 +500,8 @@ int send_reverse_command(const char *target_user) {
     char command[2048];
     printf("Envoi de la commande reverse à %s...\n", target_user);
     snprintf(command, sizeof(command), 
-             "curl -s \"%s/api/reverse?id=%s\"", 
-             http_url, target_user);
+             "curl -s %s \"%s/api/reverse?id=%s\"", 
+             get_auth_header(), http_url, target_user);
              
     int ret = system(command);
     if (ret == 0) {
@@ -421,14 +522,10 @@ int send_uninstall_command(const char *target_user) {
     
     // Si target_user est NULL, désinstaller soi-même
     const char *actual_target = target_user ? target_user : from_user;
-    
-    if (target_user && strcmp(from_user, "zakburak") != 0 && strcmp(target_user, from_user) != 0) {
-        printf("Erreur: Seul lui meme peut se désinstaller.\n");
-        free(from_user);
-        return 1;
-    }
 
     char command[2048];
+    char output[4096] = {0};
+    
     if (target_user) {
         printf("Envoi de la commande de désinstallation à %s...\n", actual_target);
     } else {
@@ -436,17 +533,81 @@ int send_uninstall_command(const char *target_user) {
     }
     
     snprintf(command, sizeof(command), 
-             "curl -s \"%s/api/uninstall?id=%s&from=%s\"", 
-             http_url, actual_target, from_user);
+             "curl -s %s \"%s/api/uninstall?id=%s&from=%s\"", 
+             get_auth_header(), http_url, actual_target, from_user);
     
     free(from_user);
-             
-    int ret = system(command);
-    if (ret == 0) {
-        printf("\nCommande de désinstallation envoyée avec succès !\n");
-        return 0;
-    } else {
-        printf("\nErreur lors de l'envoi de la commande de désinstallation.\n");
+    
+    FILE *fp = popen(command, "r");
+    if (!fp) {
+        printf("Erreur lors de l'envoi de la commande.\n");
         return 1;
     }
+    
+    size_t total = 0;
+    while (fgets(output + total, sizeof(output) - total, fp)) {
+        total = strlen(output);
+    }
+    pclose(fp);
+    
+    // Afficher la réponse du serveur
+    if (strstr(output, "Forbidden") || strstr(output, "Unauthorized")) {
+        printf("\n❌ %s", output);
+        return 1;
+    } else if (strstr(output, "sent to")) {
+        printf("\n✅ %s", output);
+        return 0;
+    } else {
+        printf("\n%s", output);
+        return 0;
+    }
+}
+
+int send_login_command(const char *user, const char *pass) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    char output[4096] = {0};
+    
+    printf("Connexion en tant que '%s'...\n", user);
+    
+    // Utiliser --data-urlencode pour encoder correctement les paramètres
+    snprintf(command, sizeof(command), 
+             "curl -s -G \"%s/api/login\" --data-urlencode \"user=%s\" --data-urlencode \"pass=%s\"", 
+             http_url, user, pass);
+    
+    FILE *fp = popen(command, "r");
+    if (!fp) {
+        printf("Erreur lors de la connexion.\n");
+        return 1;
+    }
+    
+    size_t total = 0;
+    while (fgets(output + total, sizeof(output) - total, fp)) {
+        total = strlen(output);
+    }
+    pclose(fp);
+    
+    // Parser la réponse JSON
+    cJSON *json = cJSON_Parse(output);
+    if (json) {
+        cJSON *status = cJSON_GetObjectItemCaseSensitive(json, "status");
+        cJSON *token = cJSON_GetObjectItemCaseSensitive(json, "token");
+        
+        if (cJSON_IsString(status) && strcmp(status->valuestring, "success") == 0 &&
+            cJSON_IsString(token)) {
+            // Sauvegarder le token admin
+            strncpy(client_token, token->valuestring, sizeof(client_token) - 1);
+            save_token_to_file(client_token);
+            printf("\n✅ Connexion réussie ! Token admin sauvegardé.\n");
+            printf("🔑 Token: %s\n", client_token);
+            cJSON_Delete(json);
+            return 0;
+        }
+        cJSON_Delete(json);
+    }
+    
+    printf("\n❌ Échec de connexion: %s\n", output);
+    return 1;
 }

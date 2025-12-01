@@ -3,6 +3,7 @@
 #include <string.h>
 #include <signal.h>
 #include <time.h>
+#include <stdlib.h>
 
 #ifndef VERSION
 #define VERSION "0.0.0"
@@ -18,12 +19,17 @@ void signal_handler(int sig) {
 static void print_help(const char *prog_name) {
     printf("\n");
     printf("  \033[1;36mCOMMANDS:\033[0m\n");
+    printf("    \033[1;32mlogin\033[0m <user> <pass>            Se connecter en admin\n");
     printf("    \033[1;32mlist\033[0m                           Lister les clients connectés\n");
     printf("    \033[1;32msend\033[0m <user> <image|url>        Envoyer une image à un client\n");
     printf("    \033[1;32mupdate\033[0m <user>                  Mettre à jour un client distant\n");
-    printf("    \033[1;32muninstall\033[0m                      Désinstaller\n");
+    printf("    \033[1;32muninstall\033[0m [user]               Désinstaller (soi-même ou autre si admin)\n");
     printf("    \033[1;32mkey\033[0m <user> <combo>             Envoyer un raccourci clavier\n");
     printf("    \033[1;32mreverse\033[0m <user>                 Inverser l'écran pendant 3s\n\n");
+    printf("  \033[1;36mOPTIONS:\033[0m\n");
+    printf("    \033[1;33m-l, --local\033[0m                    Mode local (localhost:8000)\n");
+    printf("    \033[1;33m-h, --help\033[0m                     Afficher cette aide\n");
+    printf("    \033[1;33m-v, --version\033[0m                  Afficher la version\n\n");
 }
 
 // Vérifie si un argument est l'option --local ou -l
@@ -87,6 +93,12 @@ int main(int argc, char **argv) {
         set_local_mode(1);
     }
 
+    // Charger le token d'authentification depuis l'environnement
+    const char *token = getenv("WALLCHANGE_TOKEN");
+    if (token) {
+        set_admin_token(token);
+    }
+
     // Trouver l'index de la commande (après les flags)
     int cmd_idx = get_command_index(argc, argv);
     
@@ -118,6 +130,10 @@ int main(int argc, char **argv) {
     // Mode commande : lister les clients
     if (cmd_idx > 0 && strcmp(argv[cmd_idx], "list") == 0) {
         return send_list_command();
+    }
+    // Mode commande : login admin
+    if (cmd_idx > 0 && cmd_idx + 2 <= argc - 1 && strcmp(argv[cmd_idx], "login") == 0) {
+        return send_login_command(argv[cmd_idx + 1], argv[cmd_idx + 2]);
     }
 
     signal(SIGINT, signal_handler);
