@@ -7,7 +7,7 @@
 #include <openssl/sha.h>
 
 #ifndef VERSION
-#define VERSION "0.0.10"
+#define VERSION "0.0.11"
 #endif
 
 static const char *s_listen_on = "ws://0.0.0.0:8000";
