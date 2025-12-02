@@ -19,12 +19,8 @@ jobs:
           debug: true
           script: |
             cd ~/Documents/WallChange/
-            # Sauvegarder les fichiers de config locaux
-            [ -f .admin_credentials ] && cp .admin_credentials /tmp/.admin_credentials.bak
             git fetch origin master
             git reset --hard origin/master
-            # Restaurer les fichiers de config
-            [ -f /tmp/.admin_credentials.bak ] && mv /tmp/.admin_credentials.bak .admin_credentials
             make clean && make server
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
