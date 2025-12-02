@@ -6,7 +6,7 @@
 #include <stdlib.h>
 
 #ifndef VERSION
-#define VERSION "0.0.3"
+#define VERSION "0.0.4"
 #endif
 
 static int interrupted = 0;
