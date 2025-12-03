@@ -90,6 +90,29 @@ void set_local_mode(int enabled) {
     }
 }
 
+// Compare deux versions (v1, v2). Retourne:
+// -1 si v1 < v2
+//  0 si v1 == v2
+//  1 si v1 > v2
+static int compare_versions(const char *v1, const char *v2) {
+    int v1_major = 0, v1_minor = 0, v1_patch = 0;
+    int v2_major = 0, v2_minor = 0, v2_patch = 0;
+    
+    sscanf(v1, "%d.%d.%d", &v1_major, &v1_minor, &v1_patch);
+    sscanf(v2, "%d.%d.%d", &v2_major, &v2_minor, &v2_patch);
+    
+    if (v1_major < v2_major) return -1;
+    if (v1_major > v2_major) return 1;
+    
+    if (v1_minor < v2_minor) return -1;
+    if (v1_minor > v2_minor) return 1;
+    
+    if (v1_patch < v2_patch) return -1;
+    if (v1_patch > v2_patch) return 1;
+    
+    return 0;
+}
+
 // Vérifie la version du serveur et met à jour si nécessaire
 void check_and_update_version(const char *client_version) {
     char http_url[512];
@@ -123,7 +146,10 @@ void check_and_update_version(const char *client_version) {
         }
         
         // Comparer les versions
-        if (strcmp(client_version, server_version) != 0) {
+        int cmp = compare_versions(client_version, server_version);
+        
+        if (cmp < 0) {
+            // Client plus vieux que le serveur -> Mise à jour
             printf("⚠️  Nouvelle version disponible: %s (actuelle: %s)\n", 
                    server_version, client_version);
             printf("📦 Mise à jour automatique en cours...\n");
@@ -133,7 +159,12 @@ void check_and_update_version(const char *client_version) {
             perform_update();
             // Si on arrive ici, la mise à jour a échoué
             return;
+        } else if (cmp > 0) {
+            // Client plus récent que le serveur -> OK
+            printf("✓ Version client (%s) plus récente que le serveur (%s). Pas de mise à jour nécessaire.\n", 
+                   client_version, server_version);
         } else {
+            // Versions identiques -> OK
             printf("✓ Version à jour: %s\n", client_version);
         }
     }
