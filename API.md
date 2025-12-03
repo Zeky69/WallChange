@@ -129,6 +129,7 @@ Upload une image et l'envoie optionnellement à un client.
 | Param | Type | Description |
 |-------|------|-------------|
 | `id` | string | (Optionnel) ID du client cible |
+| `type` | string | (Optionnel) Type d'action : `wallpaper` (défaut) ou `marquee` |
 
 **Body :** `multipart/form-data` avec le fichier image
 

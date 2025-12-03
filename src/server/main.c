@@ -731,7 +731,9 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             if (uploaded) {
                 // Si on a un ID cible, on envoie la notif
                 char target_id[32];
+                char type[32] = {0};
                 get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+                get_qs_var(&hm->query, "type", type, sizeof(type));
                 
                 if (strlen(target_id) > 0) {
                     if (check_rate_limit(hm, target_id)) {
@@ -750,6 +752,9 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                     
                     // Envoi WebSocket
                     cJSON *json = cJSON_CreateObject();
+                    if (strcmp(type, "marquee") == 0) {
+                        cJSON_AddStringToObject(json, "command", "marquee");
+                    }
                     cJSON_AddStringToObject(json, "url", full_url);
                     char *json_str = cJSON_PrintUnformatted(json);
                     

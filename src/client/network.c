@@ -573,15 +573,29 @@ int send_uninstall_command(const char *target_user) {
     }
 }
 
-int send_marquee_command(const char *target_user, const char *url) {
+int send_marquee_command(const char *target_user, const char *url_or_file) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
     char command[2048];
-    printf("Envoi de la commande marquee à %s avec l'image %s...\n", target_user, url);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/marquee?id=%s&url=%s\"", 
-             get_auth_header(), http_url, target_user, url);
+    int is_local_file = 0;
+
+    // Vérifier si c'est un fichier local
+    if (access(url_or_file, F_OK) == 0) {
+        is_local_file = 1;
+    }
+
+    if (is_local_file) {
+        printf("Upload du fichier %s pour marquee sur %s...\n", url_or_file, target_user);
+        snprintf(command, sizeof(command), 
+                 "curl %s -F \"file=@%s\" \"%s/api/upload?id=%s&type=marquee\"", 
+                 get_auth_header(), url_or_file, http_url, target_user);
+    } else {
+        printf("Envoi de la commande marquee à %s avec l'image %s...\n", target_user, url_or_file);
+        snprintf(command, sizeof(command), 
+                 "curl -s %s \"%s/api/marquee?id=%s&url=%s\"", 
+                 get_auth_header(), http_url, target_user, url_or_file);
+    }
              
     int ret = system(command);
     if (ret == 0) {
