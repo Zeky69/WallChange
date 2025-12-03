@@ -2,6 +2,7 @@
 #define UTILS_H
 
 char *get_username();
+char *get_hostname();
 char *get_os_info();
 char *get_uptime();
 char *get_cpu_load();

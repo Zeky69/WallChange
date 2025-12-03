@@ -292,6 +292,7 @@ void send_client_info() {
     
     cJSON *json = cJSON_CreateObject();
     cJSON_AddStringToObject(json, "type", "info");
+    cJSON_AddStringToObject(json, "hostname", get_hostname());
     cJSON_AddStringToObject(json, "os", get_os_info());
     cJSON_AddStringToObject(json, "uptime", get_uptime());
     cJSON_AddStringToObject(json, "cpu", get_cpu_load());

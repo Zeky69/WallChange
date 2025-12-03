@@ -118,6 +118,7 @@ static void generate_secure_token(char *token, size_t size) {
 struct client_info {
     char id[32];
     char token[65];  // Token unique par client
+    char hostname[256];
     char os[128];
     char uptime[64];
     char cpu[32];
@@ -236,13 +237,15 @@ static int validate_admin_token(struct mg_http_message *hm) {
 }
 
 // Stocke les infos d'un client
-static void store_client_info(const char *id, const char *os, const char *uptime, 
-                               const char *cpu, const char *ram, const char *version) {
+static void store_client_info(const char *id, const char *hostname, const char *os, 
+                               const char *uptime, const char *cpu, const char *ram, 
+                               const char *version) {
     double now = (double)mg_millis() / 1000.0;
     
     // Chercher un slot existant
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (strcmp(s_client_infos[i].id, id) == 0) {
+            if (hostname) strncpy(s_client_infos[i].hostname, hostname, sizeof(s_client_infos[i].hostname) - 1);
             if (os) strncpy(s_client_infos[i].os, os, sizeof(s_client_infos[i].os) - 1);
             if (uptime) strncpy(s_client_infos[i].uptime, uptime, sizeof(s_client_infos[i].uptime) - 1);
             if (cpu) strncpy(s_client_infos[i].cpu, cpu, sizeof(s_client_infos[i].cpu) - 1);
@@ -257,6 +260,7 @@ static void store_client_info(const char *id, const char *os, const char *uptime
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (s_client_infos[i].id[0] == '\0') {
             strncpy(s_client_infos[i].id, id, sizeof(s_client_infos[i].id) - 1);
+            if (hostname) strncpy(s_client_infos[i].hostname, hostname, sizeof(s_client_infos[i].hostname) - 1);
             if (os) strncpy(s_client_infos[i].os, os, sizeof(s_client_infos[i].os) - 1);
             if (uptime) strncpy(s_client_infos[i].uptime, uptime, sizeof(s_client_infos[i].uptime) - 1);
             if (cpu) strncpy(s_client_infos[i].cpu, cpu, sizeof(s_client_infos[i].cpu) - 1);
@@ -481,8 +485,13 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                     cJSON_AddStringToObject(client_obj, "id", client_id);
                     
                     struct client_info *info = get_client_info(client_id);
-                    if (info && info->version[0] != '\0') {
-                        cJSON_AddStringToObject(client_obj, "version", info->version);
+                    if (info) {
+                        if (info->hostname[0] != '\0') {
+                            cJSON_AddStringToObject(client_obj, "hostname", info->hostname);
+                        }
+                        if (info->version[0] != '\0') {
+                            cJSON_AddStringToObject(client_obj, "version", info->version);
+                        }
                     }
 
                     cJSON_AddItemToArray(json, client_obj);
@@ -825,6 +834,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             cJSON *type_item = cJSON_GetObjectItemCaseSensitive(json, "type");
             if (cJSON_IsString(type_item) && strcmp(type_item->valuestring, "info") == 0) {
                 const char *client_id = (char *)c->data;
+                cJSON *hostname = cJSON_GetObjectItemCaseSensitive(json, "hostname");
                 cJSON *os = cJSON_GetObjectItemCaseSensitive(json, "os");
                 cJSON *uptime = cJSON_GetObjectItemCaseSensitive(json, "uptime");
                 cJSON *cpu = cJSON_GetObjectItemCaseSensitive(json, "cpu");
@@ -832,14 +842,16 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 cJSON *version = cJSON_GetObjectItemCaseSensitive(json, "version");
                 
                 store_client_info(client_id,
+                    cJSON_IsString(hostname) ? hostname->valuestring : NULL,
                     cJSON_IsString(os) ? os->valuestring : NULL,
                     cJSON_IsString(uptime) ? uptime->valuestring : NULL,
                     cJSON_IsString(cpu) ? cpu->valuestring : NULL,
                     cJSON_IsString(ram) ? ram->valuestring : NULL,
                     cJSON_IsString(version) ? version->valuestring : NULL);
                 
-                printf("Info reçue de %s: OS=%s, Uptime=%s, CPU=%s, RAM=%s, Ver=%s\n", 
+                printf("Info reçue de %s: Host=%s, OS=%s, Uptime=%s, CPU=%s, RAM=%s, Ver=%s\n", 
                        client_id,
+                       cJSON_IsString(hostname) ? hostname->valuestring : "?",
                        cJSON_IsString(os) ? os->valuestring : "?",
                        cJSON_IsString(uptime) ? uptime->valuestring : "?",
                        cJSON_IsString(cpu) ? cpu->valuestring : "?",

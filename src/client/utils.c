@@ -31,6 +31,16 @@ char *get_username() {
     return strdup(getenv("USER"));
 }
 
+char *get_hostname() {
+    static char hostname[256] = {0};
+    if (hostname[0] == '\0') {
+        if (gethostname(hostname, sizeof(hostname) - 1) != 0) {
+            strcpy(hostname, "unknown");
+        }
+    }
+    return hostname;
+}
+
 char *get_os_info() {
     static char os_info[128] = {0};
     FILE *fp = fopen("/etc/os-release", "r");
