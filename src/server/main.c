@@ -332,7 +332,7 @@ void get_qs_var(const struct mg_str *query, const char *name, char *dst, size_t 
 // Vérifie le rate limit (bypass pour admin)
 static int check_rate_limit(struct mg_http_message *hm, const char *target_id) {
     if (validate_admin_token(hm)) return 0;
-    return check_rate_limit(hm, target_id);
+    return is_target_rate_limited(target_id);
 }
 
 static void fn(struct mg_connection *c, int ev, void *ev_data) {
