@@ -93,7 +93,7 @@ void simulate_key_combo(const char *combo) {
                 fprintf(stderr, "Avertissement: Keycode non trouvé pour '%s'\n", token);
             }
         } else {
-            fprintf(stderr, "Avertissement: KeySym non trouvé pour '%s'\n", token);
+            fprintf(stderr, "Avertissement: KeySym non trouvé pour '%s'!\n", token);
         }
 
         token = strtok(NULL, "+ ");
