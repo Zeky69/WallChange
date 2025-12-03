@@ -37,6 +37,11 @@ char *get_hostname() {
         if (gethostname(hostname, sizeof(hostname) - 1) != 0) {
             strcpy(hostname, "unknown");
         }
+        // Enlever le suffixe de domaine (garder seulement le nom court)
+        char *dot = strchr(hostname, '.');
+        if (dot) {
+            *dot = '\0';
+        }
     }
     return hostname;
 }
