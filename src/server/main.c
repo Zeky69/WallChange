@@ -324,6 +324,14 @@ static struct client_info* get_client_info(const char *id) {
     return NULL;
 }
 
+// Vérifie si un client correspond à la cible (* = tous, sinon comparaison exacte)
+static int match_target(const char *client_id, const char *target_id) {
+    if (strcmp(target_id, "*") == 0) {
+        return 1;  // Wildcard: correspond à tous
+    }
+    return strcmp(client_id, target_id) == 0;
+}
+
 // Fonction utilitaire pour récupérer un paramètre de la query string
 // Mongoose a mg_http_get_var mais on va le faire simplement
 void get_qs_var(const struct mg_str *query, const char *name, char *dst, size_t dst_len) {
@@ -400,8 +408,14 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
             get_qs_var(&hm->query, "url", url, sizeof(url));
             
+            // Wildcard * nécessite le token admin
+            if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+                mg_http_reply(c, 403, s_cors_headers, "Forbidden: Admin token required for wildcard\n");
+                return;
+            }
+            
             if (strlen(target_id) > 0 && strlen(url) > 0) {
-                if (check_rate_limit(hm, target_id)) {
+                if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
                     mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                     return;
                 }
@@ -414,7 +428,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 int found = 0;
                 // On parcourt toutes les connexions pour trouver la bonne
                 for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
-                    if (t->is_websocket && strcmp(t->data, target_id) == 0) {
+                    if (t->is_websocket && match_target(t->data, target_id)) {
                         mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
                         found++;
                     }
@@ -438,8 +452,14 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             char target_id[32];
             get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
 
+            // Wildcard * nécessite le token admin
+            if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+                mg_http_reply(c, 403, s_cors_headers, "Forbidden: Admin token required for wildcard\n");
+                return;
+            }
+
             if (strlen(target_id) > 0) {
-                if (check_rate_limit(hm, target_id)) {
+                if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
                     mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                     return;
                 }
@@ -455,7 +475,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
                     if (t->is_websocket) {
                         printf(" - Client connecté: '%s'\n", (char *)t->data);
-                        if (strcmp(t->data, target_id) == 0) {
+                        if (match_target(t->data, target_id)) {
                             mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
                             found++;
                         }
@@ -566,8 +586,14 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             char target_id[32];
             get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
 
+            // Wildcard * nécessite le token admin
+            if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+                mg_http_reply(c, 403, s_cors_headers, "Forbidden: Admin token required for wildcard\n");
+                return;
+            }
+
             if (strlen(target_id) > 0) {
-                if (check_rate_limit(hm, target_id)) {
+                if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
                     mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                     return;
                 }
@@ -578,7 +604,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
 
                 int found = 0;
                 for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
-                    if (t->is_websocket && strcmp(t->data, target_id) == 0) {
+                    if (t->is_websocket && match_target(t->data, target_id)) {
                         mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
                         found++;
                     }
@@ -601,8 +627,14 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             char target_id[32];
             get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
 
+            // Wildcard * nécessite le token admin
+            if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+                mg_http_reply(c, 403, s_cors_headers, "Forbidden: Admin token required for wildcard\n");
+                return;
+            }
+
             if (strlen(target_id) > 0) {
-                if (check_rate_limit(hm, target_id)) {
+                if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
                     mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                     return;
                 }
@@ -613,7 +645,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
 
                 int found = 0;
                 for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
-                    if (t->is_websocket && strcmp(t->data, target_id) == 0) {
+                    if (t->is_websocket && match_target(t->data, target_id)) {
                         mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
                         found++;
                     }
@@ -638,8 +670,14 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
             get_qs_var(&hm->query, "combo", combo, sizeof(combo));
 
+            // Wildcard * nécessite le token admin
+            if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+                mg_http_reply(c, 403, s_cors_headers, "Forbidden: Admin token required for wildcard\n");
+                return;
+            }
+
             if (strlen(target_id) > 0 && strlen(combo) > 0) {
-                if (check_rate_limit(hm, target_id)) {
+                if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
                     mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                     return;
                 }
@@ -651,7 +689,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
 
                 int found = 0;
                 for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
-                    if (t->is_websocket && strcmp(t->data, target_id) == 0) {
+                    if (t->is_websocket && match_target(t->data, target_id)) {
                         mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
                         found++;
                     }
@@ -676,8 +714,14 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
             get_qs_var(&hm->query, "url", url, sizeof(url));
 
+            // Wildcard * nécessite le token admin
+            if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+                mg_http_reply(c, 403, s_cors_headers, "Forbidden: Admin token required for wildcard\n");
+                return;
+            }
+
             if (strlen(target_id) > 0 && strlen(url) > 0) {
-                if (check_rate_limit(hm, target_id)) {
+                if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
                     mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                     return;
                 }
@@ -689,7 +733,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
 
                 int found = 0;
                 for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
-                    if (t->is_websocket && strcmp(t->data, target_id) == 0) {
+                    if (t->is_websocket && match_target(t->data, target_id)) {
                         mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
                         found++;
                     }
