@@ -179,23 +179,39 @@ static void show_image_on_screen(const char *image_path) {
     free(bgra);
 }
 
-void execute_marquee(const char *url) {
-    // 1. Télécharger l'image
+void execute_marquee(const char *url_or_path) {
     char filepath[512];
-    snprintf(filepath, sizeof(filepath), "/tmp/wallchange_marquee_%d.png", getpid());
-    
-    if (download_image(url, filepath)) {
-        // 2. Forker pour ne pas bloquer le client
-        pid_t pid = fork();
-        if (pid == 0) {
-            // Processus enfant
-            show_image_on_screen(filepath);
-            unlink(filepath); // Supprimer le fichier temporaire
-            exit(0);
+    int is_local = 0;
+
+    // Vérifier si c'est une URL ou un fichier local
+    if (strncmp(url_or_path, "http://", 7) == 0 || strncmp(url_or_path, "https://", 8) == 0) {
+        // C'est une URL, on télécharge
+        snprintf(filepath, sizeof(filepath), "/tmp/wallchange_marquee_%d.png", getpid());
+        if (!download_image(url_or_path, filepath)) {
+            printf("Erreur téléchargement image pour marquee\n");
+            return;
         }
-        // Le parent continue
     } else {
-        printf("Erreur téléchargement image pour marquee\n");
+        // C'est un fichier local
+        if (access(url_or_path, F_OK) != -1) {
+            strncpy(filepath, url_or_path, sizeof(filepath) - 1);
+            is_local = 1;
+        } else {
+            printf("Fichier local introuvable : %s\n", url_or_path);
+            return;
+        }
     }
+
+    // 2. Forker pour ne pas bloquer le client
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Processus enfant
+        show_image_on_screen(filepath);
+        if (!is_local) {
+            unlink(filepath); // Supprimer le fichier temporaire seulement si téléchargé
+        }
+        exit(0);
+    }
+    // Le parent continue
 }
 

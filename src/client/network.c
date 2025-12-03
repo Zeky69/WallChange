@@ -265,6 +265,7 @@ void send_client_info() {
     cJSON_AddStringToObject(json, "uptime", get_uptime());
     cJSON_AddStringToObject(json, "cpu", get_cpu_load());
     cJSON_AddStringToObject(json, "ram", get_ram_usage());
+    cJSON_AddStringToObject(json, "version", VERSION);
     
     char *json_str = cJSON_PrintUnformatted(json);
     if (json_str) {

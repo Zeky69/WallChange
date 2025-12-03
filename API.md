@@ -77,10 +77,12 @@ Liste tous les clients connectés.
 ```json
 [
   {
-    "id": "zekynux"
+    "id": "zekynux",
+    "version": "1.0.41"
   },
   {
-    "id": "alice"
+    "id": "alice",
+    "version": "1.0.40"
   }
 ]
 ```
@@ -286,7 +288,7 @@ Fait défiler une image de droite à gauche sur l'écran du client.
 | Param | Type | Description |
 |-------|------|-------------|
 | `id` | string | ID du client cible |
-| `url` | string | URL de l'image à faire défiler |
+| `url` | string | URL de l'image ou chemin de fichier local (si supporté par le client) |
 
 **Réponse (200) :**
 ```
@@ -335,7 +337,8 @@ Les clients se connectent via WebSocket à `ws://server:port/{username}`.
   "os": "Ubuntu 24.04.3 LTS",
   "uptime": "3h 27m",
   "cpu": "1.51, 1.49, 1.41",
-  "ram": "9785/15623MB (62%)"
+  "ram": "9785/15623MB (62%)",
+  "version": "1.0.41"
 }
 ```
 

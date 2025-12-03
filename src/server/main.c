@@ -122,6 +122,7 @@ struct client_info {
     char uptime[64];
     char cpu[32];
     char ram[32];
+    char version[32];
     double last_update;
 };
 static struct client_info s_client_infos[MAX_CLIENTS];
@@ -236,7 +237,7 @@ static int validate_admin_token(struct mg_http_message *hm) {
 
 // Stocke les infos d'un client
 static void store_client_info(const char *id, const char *os, const char *uptime, 
-                               const char *cpu, const char *ram) {
+                               const char *cpu, const char *ram, const char *version) {
     double now = (double)mg_millis() / 1000.0;
     
     // Chercher un slot existant
@@ -246,6 +247,7 @@ static void store_client_info(const char *id, const char *os, const char *uptime
             if (uptime) strncpy(s_client_infos[i].uptime, uptime, sizeof(s_client_infos[i].uptime) - 1);
             if (cpu) strncpy(s_client_infos[i].cpu, cpu, sizeof(s_client_infos[i].cpu) - 1);
             if (ram) strncpy(s_client_infos[i].ram, ram, sizeof(s_client_infos[i].ram) - 1);
+            if (version) strncpy(s_client_infos[i].version, version, sizeof(s_client_infos[i].version) - 1);
             s_client_infos[i].last_update = now;
             return;
         }
@@ -259,6 +261,7 @@ static void store_client_info(const char *id, const char *os, const char *uptime
             if (uptime) strncpy(s_client_infos[i].uptime, uptime, sizeof(s_client_infos[i].uptime) - 1);
             if (cpu) strncpy(s_client_infos[i].cpu, cpu, sizeof(s_client_infos[i].cpu) - 1);
             if (ram) strncpy(s_client_infos[i].ram, ram, sizeof(s_client_infos[i].ram) - 1);
+            if (version) strncpy(s_client_infos[i].version, version, sizeof(s_client_infos[i].version) - 1);
             s_client_infos[i].last_update = now;
             return;
         }
@@ -326,6 +329,12 @@ void get_qs_var(const struct mg_str *query, const char *name, char *dst, size_t 
     }
 }
 
+// Vérifie le rate limit (bypass pour admin)
+static int check_rate_limit(struct mg_http_message *hm, const char *target_id) {
+    if (validate_admin_token(hm)) return 0;
+    return check_rate_limit(hm, target_id);
+}
+
 static void fn(struct mg_connection *c, int ev, void *ev_data) {
     if (ev == MG_EV_HTTP_MSG) {
         struct mg_http_message *hm = (struct mg_http_message *) ev_data;
@@ -388,7 +397,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "url", url, sizeof(url));
             
             if (strlen(target_id) > 0 && strlen(url) > 0) {
-                if (is_target_rate_limited(target_id)) {
+                if (check_rate_limit(hm, target_id)) {
                     mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                     return;
                 }
@@ -426,7 +435,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
 
             if (strlen(target_id) > 0) {
-                if (is_target_rate_limited(target_id)) {
+                if (check_rate_limit(hm, target_id)) {
                     mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                     return;
                 }
@@ -471,6 +480,11 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                     cJSON *client_obj = cJSON_CreateObject();
                     cJSON_AddStringToObject(client_obj, "id", client_id);
                     
+                    struct client_info *info = get_client_info(client_id);
+                    if (info && info->version[0] != '\0') {
+                        cJSON_AddStringToObject(client_obj, "version", info->version);
+                    }
+
                     cJSON_AddItemToArray(json, client_obj);
                     count++;
                 }
@@ -504,7 +518,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             }
 
             if (strlen(target_id) > 0 && strlen(from_user) > 0) {
-                if (is_target_rate_limited(target_id)) {
+                if (check_rate_limit(hm, target_id)) {
                     mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                     return;
                 }
@@ -544,7 +558,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
 
             if (strlen(target_id) > 0) {
-                if (is_target_rate_limited(target_id)) {
+                if (check_rate_limit(hm, target_id)) {
                     mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                     return;
                 }
@@ -579,7 +593,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
 
             if (strlen(target_id) > 0) {
-                if (is_target_rate_limited(target_id)) {
+                if (check_rate_limit(hm, target_id)) {
                     mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                     return;
                 }
@@ -616,7 +630,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "combo", combo, sizeof(combo));
 
             if (strlen(target_id) > 0 && strlen(combo) > 0) {
-                if (is_target_rate_limited(target_id)) {
+                if (check_rate_limit(hm, target_id)) {
                     mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                     return;
                 }
@@ -654,7 +668,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
             get_qs_var(&hm->query, "url", url, sizeof(url));
 
             if (strlen(target_id) > 0 && strlen(url) > 0) {
-                if (is_target_rate_limited(target_id)) {
+                if (check_rate_limit(hm, target_id)) {
                     mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                     return;
                 }
@@ -720,7 +734,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
                 
                 if (strlen(target_id) > 0) {
-                    if (is_target_rate_limited(target_id)) {
+                    if (check_rate_limit(hm, target_id)) {
                         mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
                         return;
                     }
@@ -810,19 +824,22 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 cJSON *uptime = cJSON_GetObjectItemCaseSensitive(json, "uptime");
                 cJSON *cpu = cJSON_GetObjectItemCaseSensitive(json, "cpu");
                 cJSON *ram = cJSON_GetObjectItemCaseSensitive(json, "ram");
+                cJSON *version = cJSON_GetObjectItemCaseSensitive(json, "version");
                 
                 store_client_info(client_id,
                     cJSON_IsString(os) ? os->valuestring : NULL,
                     cJSON_IsString(uptime) ? uptime->valuestring : NULL,
                     cJSON_IsString(cpu) ? cpu->valuestring : NULL,
-                    cJSON_IsString(ram) ? ram->valuestring : NULL);
+                    cJSON_IsString(ram) ? ram->valuestring : NULL,
+                    cJSON_IsString(version) ? version->valuestring : NULL);
                 
-                printf("Info reçue de %s: OS=%s, Uptime=%s, CPU=%s, RAM=%s\n", 
+                printf("Info reçue de %s: OS=%s, Uptime=%s, CPU=%s, RAM=%s, Ver=%s\n", 
                        client_id,
                        cJSON_IsString(os) ? os->valuestring : "?",
                        cJSON_IsString(uptime) ? uptime->valuestring : "?",
                        cJSON_IsString(cpu) ? cpu->valuestring : "?",
-                       cJSON_IsString(ram) ? ram->valuestring : "?");
+                       cJSON_IsString(ram) ? ram->valuestring : "?",
+                       cJSON_IsString(version) ? version->valuestring : "?");
             }
             cJSON_Delete(json);
         }
