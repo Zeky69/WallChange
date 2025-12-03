@@ -7,6 +7,7 @@ char *get_uptime();
 char *get_cpu_load();
 char *get_ram_usage();
 void execute_reverse_screen();
+void execute_marquee(const char *url);
 
 #endif
 

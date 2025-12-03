@@ -222,6 +222,15 @@ static void handle_message(const char *msg, size_t len) {
             cJSON_Delete(json);
             return;
         }
+        if (strcmp(command_item->valuestring, "marquee") == 0) {
+            cJSON *url_item = cJSON_GetObjectItemCaseSensitive(json, "url");
+            if (cJSON_IsString(url_item) && url_item->valuestring != NULL) {
+                printf("Commande marquee reçue: %s\n", url_item->valuestring);
+                execute_marquee(url_item->valuestring);
+            }
+            cJSON_Delete(json);
+            return;
+        }
     }
 
     cJSON *url_item = cJSON_GetObjectItemCaseSensitive(json, "url");
@@ -560,6 +569,26 @@ int send_uninstall_command(const char *target_user) {
     } else {
         printf("\n%s", output);
         return 0;
+    }
+}
+
+int send_marquee_command(const char *target_user, const char *url) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande marquee à %s avec l'image %s...\n", target_user, url);
+    snprintf(command, sizeof(command), 
+             "curl -s %s \"%s/api/marquee?id=%s&url=%s\"", 
+             get_auth_header(), http_url, target_user, url);
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande marquee envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande marquee.\n");
+        return 1;
     }
 }
 

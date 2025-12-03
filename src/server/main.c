@@ -3,6 +3,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include <time.h>
 #include <openssl/sha.h>
 
@@ -89,11 +90,17 @@ static void generate_secure_token(char *token, size_t size) {
     
     unsigned char bytes[32];
     int fd = open("/dev/urandom", O_RDONLY);
+    int use_fallback = 1;
+
     if (fd >= 0) {
-        read(fd, bytes, sizeof(bytes));
+        if (read(fd, bytes, sizeof(bytes)) == sizeof(bytes)) {
+            use_fallback = 0;
+        }
         close(fd);
-    } else {
-        // Fallback si /dev/urandom n'est pas disponible
+    } 
+    
+    if (use_fallback) {
+        // Fallback si /dev/urandom n'est pas disponible ou erreur de lecture
         srand(time(NULL) ^ getpid());
         for (int i = 0; i < 32; i++) {
             bytes[i] = rand() & 0xFF;
@@ -632,6 +639,44 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 mg_http_reply(c, 200, s_cors_headers, "Key '%s' sent to %d client(s)\n", combo, found);
             } else {
                 mg_http_reply(c, 400, s_cors_headers, "Missing 'id' or 'combo' parameter\n");
+            }
+        }
+        // 1.9 API pour faire défiler une image (Marquee)
+        else if (mg_match(hm->uri, mg_str("/api/marquee"), NULL)) {
+            if (!validate_bearer_token(hm)) {
+                mg_http_reply(c, 401, s_cors_headers, "Unauthorized: Invalid or missing token\n");
+                return;
+            }
+            
+            char target_id[32];
+            char url[512];
+            get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+            get_qs_var(&hm->query, "url", url, sizeof(url));
+
+            if (strlen(target_id) > 0 && strlen(url) > 0) {
+                if (is_target_rate_limited(target_id)) {
+                    mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
+                    return;
+                }
+
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "command", "marquee");
+                cJSON_AddStringToObject(json, "url", url);
+                char *json_str = cJSON_PrintUnformatted(json);
+
+                int found = 0;
+                for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
+                    if (t->is_websocket && strcmp(t->data, target_id) == 0) {
+                        mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
+                        found++;
+                    }
+                }
+
+                free(json_str);
+                cJSON_Delete(json);
+                mg_http_reply(c, 200, s_cors_headers, "Marquee sent to %d client(s)\n", found);
+            } else {
+                mg_http_reply(c, 400, s_cors_headers, "Missing 'id' or 'url' parameter\n");
             }
         }
         // 2. API pour uploader une image

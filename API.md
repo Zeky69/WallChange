@@ -276,6 +276,25 @@ Reverse sent to 1 client(s)
 
 ---
 
+### `GET /api/marquee`
+
+Fait défiler une image de droite à gauche sur l'écran du client.
+
+**Auth requise :** Oui (User ou Admin)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible |
+| `url` | string | URL de l'image à faire défiler |
+
+**Réponse (200) :**
+```
+Marquee sent to 1 client(s)
+```
+
+---
+
 ## 🌐 WebSocket
 
 Les clients se connectent via WebSocket à `ws://server:port/{username}`.
@@ -303,6 +322,7 @@ Les clients se connectent via WebSocket à `ws://server:port/{username}`.
 {"command": "uninstall", "from": "admin"}
 {"command": "showdesktop"}
 {"command": "reverse"}
+{"command": "marquee", "url": "https://example.com/image.png"}
 {"command": "key", "combo": "ctrl+alt+t"}
 ```
 

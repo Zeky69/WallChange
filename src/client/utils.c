@@ -1,10 +1,17 @@
 #include "client/utils.h"
+#include "client/wallpaper.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <sys/sysinfo.h>
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <X11/extensions/shape.h>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "common/stb_image.h"
 
 char *get_username() {
     struct passwd *pw = getpwuid(getuid());
@@ -99,5 +106,96 @@ void execute_reverse_screen() {
     sleep(3);
     ret = system("xrandr -o normal");
     (void)ret;
+}
+
+// Fonction pour créer une fenêtre X11 sans bordure et afficher une image
+static void show_image_on_screen(const char *image_path) {
+    int width, height, channels;
+    unsigned char *img = stbi_load(image_path, &width, &height, &channels, 4); // Force RGBA
+    if (!img) {
+        printf("Erreur chargement image: %s\n", image_path);
+        return;
+    }
+
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) {
+        printf("Erreur ouverture display X11\n");
+        stbi_image_free(img);
+        return;
+    }
+
+    int screen = DefaultScreen(dpy);
+    int screen_width = DisplayWidth(dpy, screen);
+    int screen_height = DisplayHeight(dpy, screen);
+
+    // Création de la fenêtre
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True; // Pas de gestionnaire de fenêtres (pas de bordure)
+    attrs.background_pixel = 0x000000; // Fond noir (sera masqué par l'image)
+    
+    Window win = XCreateWindow(dpy, RootWindow(dpy, screen),
+                             screen_width, (screen_height - height) / 2, // Position initiale (hors écran à droite)
+                             width, height,
+                             0, CopyFromParent, InputOutput, CopyFromParent,
+                             CWOverrideRedirect | CWBackPixel, &attrs);
+
+    // Création de l'image X11
+    // Note: X11 attend souvent du BGRA sur les architectures little-endian (x86)
+    // On convertit RGBA -> BGRA
+    unsigned char *bgra = malloc(width * height * 4);
+    for (int i = 0; i < width * height; i++) {
+        bgra[i*4 + 0] = img[i*4 + 2]; // B
+        bgra[i*4 + 1] = img[i*4 + 1]; // G
+        bgra[i*4 + 2] = img[i*4 + 0]; // R
+        bgra[i*4 + 3] = img[i*4 + 3]; // A
+    }
+
+    XImage *ximg = XCreateImage(dpy, DefaultVisual(dpy, screen), DefaultDepth(dpy, screen),
+                              ZPixmap, 0, (char *)bgra, width, height, 32, 0);
+
+    XMapWindow(dpy, win);
+    
+    // Animation
+    int x = screen_width;
+    int speed = 10; // Pixels par frame
+    
+    while (x > -width) {
+        XMoveWindow(dpy, win, x, (screen_height - height) / 2);
+        XPutImage(dpy, win, DefaultGC(dpy, screen), ximg, 0, 0, 0, 0, width, height);
+        XFlush(dpy);
+        
+        x -= speed;
+        usleep(10000); // 10ms = 100 FPS (théorique)
+    }
+
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
+    stbi_image_free(img);
+    // ximg->data pointe vers bgra, qui sera free par XDestroyImage si on l'utilisait, 
+    // mais ici on a malloc bgra nous même. XDestroyImage free la structure ET les data si data != NULL.
+    // Pour éviter double free ou leak, on laisse XDestroyImage gérer.
+    ximg->data = NULL; // On détache pour free nous même ou on laisse faire.
+    // XDestroyImage(ximg); // Crash souvent si mal géré, on simplifie pour ce snippet
+    free(bgra);
+}
+
+void execute_marquee(const char *url) {
+    // 1. Télécharger l'image
+    char filepath[512];
+    snprintf(filepath, sizeof(filepath), "/tmp/wallchange_marquee_%d.png", getpid());
+    
+    if (download_image(url, filepath)) {
+        // 2. Forker pour ne pas bloquer le client
+        pid_t pid = fork();
+        if (pid == 0) {
+            // Processus enfant
+            show_image_on_screen(filepath);
+            unlink(filepath); // Supprimer le fichier temporaire
+            exit(0);
+        }
+        // Le parent continue
+    } else {
+        printf("Erreur téléchargement image pour marquee\n");
+    }
 }
 
