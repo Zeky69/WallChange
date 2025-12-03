@@ -121,14 +121,14 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ### `POST /api/upload`
 
-Upload une image et l'envoie optionnellement à un client.
+Upload une image locale et l'envoie optionnellement à un client.
 
 **Auth requise :** Oui (User ou Admin)
 
 **Paramètres Query :**
 | Param | Type | Description |
 |-------|------|-------------|
-| `id` | string | (Optionnel) ID du client cible |
+| `id` | string | (Optionnel) ID du client cible (ou `*` pour tous - admin) |
 | `type` | string | (Optionnel) Type d'action : `wallpaper` (défaut) ou `marquee` |
 
 **Body :** `multipart/form-data` avec le fichier image
@@ -142,12 +142,39 @@ ou
 Uploaded but no target id provided
 ```
 
-**Exemple :**
+**Exemples curl :**
+
 ```bash
+# Envoyer une image locale comme fond d'écran
 curl -H "Authorization: Bearer $TOKEN" \
-  -F "file=@wallpaper.jpg" \
-  "http://localhost:8000/api/upload?id=zekynux"
+  -F "file=@/chemin/vers/image.jpg" \
+  "http://localhost:8000/api/upload?id=zakburak"
+
+# Envoyer une image locale en marquee (défilement)
+curl -H "Authorization: Bearer $TOKEN" \
+  -F "file=@/chemin/vers/image.png" \
+  "http://localhost:8000/api/upload?id=zakburak&type=marquee"
+
+# Envoyer un GIF local en marquee
+curl -H "Authorization: Bearer $TOKEN" \
+  -F "file=@./mon-gif.gif" \
+  "http://localhost:8000/api/upload?id=zakburak&type=marquee"
+
+# Envoyer à tous les clients (admin)
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -F "file=@./wallpaper.jpg" \
+  "http://localhost:8000/api/upload?id=*"
+
+# Upload sans envoi (juste stocker sur le serveur)
+curl -H "Authorization: Bearer $TOKEN" \
+  -F "file=@./image.jpg" \
+  "http://localhost:8000/api/upload"
 ```
+
+**Notes :**
+- Le fichier est uploadé dans le dossier `uploads/` du serveur
+- L'URL générée est automatiquement envoyée au client cible
+- Formats supportés : JPG, PNG, GIF (animé inclus), BMP, etc.
 
 ---
 
@@ -281,20 +308,66 @@ Reverse sent to 1 client(s)
 
 ### `GET /api/marquee`
 
-Fait défiler une image de droite à gauche sur l'écran du client.
+Fait défiler une image de droite à gauche sur l'écran du client. Supporte les images statiques (PNG, JPG) et les GIFs animés.
 
 **Auth requise :** Oui (User ou Admin)
 
 **Paramètres :**
 | Param | Type | Description |
 |-------|------|-------------|
-| `id` | string | ID du client cible |
-| `url` | string | URL de l'image ou chemin de fichier local (si supporté par le client) |
+| `id` | string | ID du client cible (ou `*` pour tous - admin uniquement) |
+| `url` | string | URL de l'image |
 
 **Réponse (200) :**
 ```
 Marquee sent to 1 client(s)
 ```
+
+**Exemples curl :**
+
+```bash
+# Envoyer un marquee à un utilisateur spécifique
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/marquee?id=zakburak&url=https://example.com/image.png"
+
+# Envoyer un GIF animé
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/marquee?id=zakburak&url=https://media.tenor.com/xxx/among-us.gif"
+
+# Envoyer à TOUS les clients (admin uniquement)
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8000/api/marquee?id=*&url=https://example.com/image.png"
+```
+
+---
+
+## 🌟 Wildcard (Admin)
+
+L'admin peut utiliser `*` comme `id` pour envoyer une commande à **tous les clients connectés**.
+
+**Endpoints supportés :** `send`, `update`, `showdesktop`, `reverse`, `key`, `marquee`
+
+**Exemples :**
+
+```bash
+# Changer le fond d'écran de tout le monde
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8000/api/send?id=*&url=https://example.com/wallpaper.jpg"
+
+# Inverser l'écran de tout le monde
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8000/api/reverse?id=*"
+
+# Mettre à jour tous les clients
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8000/api/update?id=*"
+
+# Envoyer un raccourci clavier à tous
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8000/api/key?id=*&combo=super+d"
+```
+
+**Note :** Le wildcard `*` nécessite le token **admin**, pas un simple token utilisateur.
 
 ---
 
