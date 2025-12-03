@@ -26,7 +26,8 @@ static void print_help(const char *prog_name) {
     printf("    \033[1;32muninstall\033[0m [user]               Désinstaller (soi-même ou autre si admin)\n");
     printf("    \033[1;32mkey\033[0m <user> <combo>             Envoyer un raccourci clavier\n");
     printf("    \033[1;32mreverse\033[0m <user>                 Inverser l'écran pendant 3s\n");
-    printf("    \033[1;32mmarquee\033[0m <user> <url>           Faire défiler une image\n\n");
+    printf("    \033[1;32mmarquee\033[0m <user> <url>           Faire défiler une image\n");
+    printf("    \033[1;32mparticles\033[0m <user> <url>         Particules autour de la souris (10s)\n\n");
     printf("  \033[1;36mOPTIONS:\033[0m\n");
     printf("    \033[1;33m-l, --local\033[0m                    Mode local (localhost:8000)\n");
     printf("    \033[1;33m-h, --help\033[0m                     Afficher cette aide\n");
@@ -131,6 +132,10 @@ int main(int argc, char **argv) {
     // Mode commande : marquee
     if (cmd_idx > 0 && cmd_idx + 2 <= argc - 1 && strcmp(argv[cmd_idx], "marquee") == 0) {
         return send_marquee_command(argv[cmd_idx + 1], argv[cmd_idx + 2]);
+    }
+    // Mode commande : particles
+    if (cmd_idx > 0 && cmd_idx + 2 <= argc - 1 && strcmp(argv[cmd_idx], "particles") == 0) {
+        return send_particles_command(argv[cmd_idx + 1], argv[cmd_idx + 2]);
     }
     // Mode commande : lister les clients
     if (cmd_idx > 0 && strcmp(argv[cmd_idx], "list") == 0) {

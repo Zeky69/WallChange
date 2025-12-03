@@ -746,6 +746,50 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 mg_http_reply(c, 400, s_cors_headers, "Missing 'id' or 'url' parameter\n");
             }
         }
+        // 1.95 API pour les particules autour de la souris
+        else if (mg_match(hm->uri, mg_str("/api/particles"), NULL)) {
+            if (!validate_bearer_token(hm)) {
+                mg_http_reply(c, 401, s_cors_headers, "Unauthorized: Invalid or missing token\n");
+                return;
+            }
+            
+            char target_id[32];
+            char url[512];
+            get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+            get_qs_var(&hm->query, "url", url, sizeof(url));
+
+            // Wildcard * nécessite le token admin
+            if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+                mg_http_reply(c, 403, s_cors_headers, "Forbidden: Admin token required for wildcard\n");
+                return;
+            }
+
+            if (strlen(target_id) > 0 && strlen(url) > 0) {
+                if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
+                    mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
+                    return;
+                }
+
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "command", "particles");
+                cJSON_AddStringToObject(json, "url", url);
+                char *json_str = cJSON_PrintUnformatted(json);
+
+                int found = 0;
+                for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
+                    if (t->is_websocket && match_target(t->data, target_id)) {
+                        mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
+                        found++;
+                    }
+                }
+
+                free(json_str);
+                cJSON_Delete(json);
+                mg_http_reply(c, 200, s_cors_headers, "Particles sent to %d client(s)\n", found);
+            } else {
+                mg_http_reply(c, 400, s_cors_headers, "Missing 'id' or 'url' parameter\n");
+            }
+        }
         // 2. API pour uploader une image
         else if (mg_match(hm->uri, mg_str("/api/upload"), NULL)) {
             if (!validate_bearer_token(hm)) {
@@ -813,6 +857,8 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                     cJSON *json = cJSON_CreateObject();
                     if (strcmp(type, "marquee") == 0) {
                         cJSON_AddStringToObject(json, "command", "marquee");
+                    } else if (strcmp(type, "particles") == 0) {
+                        cJSON_AddStringToObject(json, "command", "particles");
                     }
                     cJSON_AddStringToObject(json, "url", full_url);
                     char *json_str = cJSON_PrintUnformatted(json);

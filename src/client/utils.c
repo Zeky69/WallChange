@@ -7,6 +7,9 @@
 #include <stdio.h>
 #include <sys/stat.h>
 #include <sys/sysinfo.h>
+#include <time.h>
+#include <sys/time.h>
+#include <math.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/shape.h>
@@ -471,5 +474,266 @@ void execute_marquee(const char *url_or_path) {
         exit(0);
     }
     // Le parent continue
+}
+
+// Structure pour une particule
+typedef struct {
+    float x, y;           // Position
+    float vx, vy;         // Vélocité
+    float life;           // Durée de vie restante (0-1)
+    float size_factor;    // Facteur de taille (0.5-1.5)
+    float rotation;       // Rotation en degrés
+    float rot_speed;      // Vitesse de rotation
+} Particle;
+
+#define MAX_PARTICLES 50
+#define PARTICLE_SPAWN_RATE 8  // Particules par frame
+#define PARTICLE_SIZE 48       // Taille standard des particules en pixels
+
+// Redimensionne une image RGBA
+static unsigned char* resize_image_rgba(const unsigned char *src, int src_w, int src_h, int dst_w, int dst_h) {
+    unsigned char *dst = malloc(dst_w * dst_h * 4);
+    if (!dst) return NULL;
+    
+    for (int y = 0; y < dst_h; y++) {
+        for (int x = 0; x < dst_w; x++) {
+            // Échantillonnage simple (nearest neighbor)
+            int src_x = x * src_w / dst_w;
+            int src_y = y * src_h / dst_h;
+            
+            int src_idx = (src_y * src_w + src_x) * 4;
+            int dst_idx = (y * dst_w + x) * 4;
+            
+            dst[dst_idx + 0] = src[src_idx + 0]; // R
+            dst[dst_idx + 1] = src[src_idx + 1]; // G
+            dst[dst_idx + 2] = src[src_idx + 2]; // B
+            dst[dst_idx + 3] = src[src_idx + 3]; // A
+        }
+    }
+    return dst;
+}
+
+// Crée un masque de transparence à partir des données RGBA
+static Pixmap create_shape_mask(Display *dpy, Window root, const unsigned char *rgba, int w, int h) {
+    Pixmap mask = XCreatePixmap(dpy, root, w, h, 1);
+    GC gc = XCreateGC(dpy, mask, 0, NULL);
+    
+    // Remplir avec 0 (transparent)
+    XSetForeground(dpy, gc, 0);
+    XFillRectangle(dpy, mask, gc, 0, 0, w, h);
+    
+    // Dessiner les pixels opaques (alpha > 128)
+    XSetForeground(dpy, gc, 1);
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            int idx = (y * w + x) * 4;
+            if (rgba[idx + 3] > 128) {  // Alpha > 50%
+                XDrawPoint(dpy, mask, gc, x, y);
+            }
+        }
+    }
+    
+    XFreeGC(dpy, gc);
+    return mask;
+}
+
+// Affiche des particules autour de la souris pendant 5 secondes
+static void show_particles_around_mouse(const char *image_path) {
+    int orig_width, orig_height, channels;
+    unsigned char *orig_img = stbi_load(image_path, &orig_width, &orig_height, &channels, 4);
+    if (!orig_img) {
+        printf("Erreur chargement image particule: %s\n", image_path);
+        return;
+    }
+
+    // Redimensionner à la taille standard
+    int img_width = PARTICLE_SIZE;
+    int img_height = PARTICLE_SIZE;
+    unsigned char *img = resize_image_rgba(orig_img, orig_width, orig_height, img_width, img_height);
+    stbi_image_free(orig_img);
+    
+    if (!img) {
+        printf("Erreur redimensionnement image\n");
+        return;
+    }
+
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) {
+        printf("Erreur ouverture display X11\n");
+        free(img);
+        return;
+    }
+
+    int screen = DefaultScreen(dpy);
+    int screen_width = DisplayWidth(dpy, screen);
+    int screen_height = DisplayHeight(dpy, screen);
+    Window root = RootWindow(dpy, screen);
+
+    // Convertir RGBA -> BGRA pour X11
+    unsigned char *bgra = rgba_to_bgra(img, img_width, img_height);
+    
+    // Créer le masque de transparence AVANT de libérer img
+    Pixmap shape_mask = create_shape_mask(dpy, root, img, img_width, img_height);
+    free(img);
+    
+    if (!bgra) {
+        XFreePixmap(dpy, shape_mask);
+        XCloseDisplay(dpy);
+        return;
+    }
+
+    // Créer l'image X11 de base
+    XImage *base_ximg = XCreateImage(dpy, DefaultVisual(dpy, screen), DefaultDepth(dpy, screen),
+                                      ZPixmap, 0, (char *)bgra, img_width, img_height, 32, 0);
+
+    // Initialiser les particules
+    Particle particles[MAX_PARTICLES];
+    Window particle_windows[MAX_PARTICLES];
+    int particle_active[MAX_PARTICLES];
+    
+    for (int i = 0; i < MAX_PARTICLES; i++) {
+        particle_active[i] = 0;
+        
+        XSetWindowAttributes attrs;
+        attrs.override_redirect = True;
+        attrs.background_pixel = 0;
+        
+        particle_windows[i] = XCreateWindow(dpy, root,
+                                            0, 0, img_width, img_height,
+                                            0, CopyFromParent, InputOutput, CopyFromParent,
+                                            CWOverrideRedirect | CWBackPixel, &attrs);
+        
+        // Appliquer le masque de transparence
+        XShapeCombineMask(dpy, particle_windows[i], ShapeBounding, 0, 0, shape_mask, ShapeSet);
+    }
+
+    // Animation pendant 10 secondes (temps réel)
+    struct timeval start_tv, current_tv;
+    gettimeofday(&start_tv, NULL);
+    double elapsed = 0.0;
+    
+    while (elapsed < 10.0) {
+        // Obtenir la position de la souris
+        Window root_return, child_return;
+        int root_x, root_y, win_x, win_y;
+        unsigned int mask;
+        XQueryPointer(dpy, root, &root_return, &child_return, &root_x, &root_y, &win_x, &win_y, &mask);
+        
+        // Spawner de nouvelles particules
+        for (int s = 0; s < PARTICLE_SPAWN_RATE; s++) {
+            for (int i = 0; i < MAX_PARTICLES; i++) {
+                if (!particle_active[i]) {
+                    particle_active[i] = 1;
+                    particles[i].x = root_x - img_width / 2;
+                    particles[i].y = root_y - img_height / 2;
+                    
+                    // Vélocité aléatoire en cercle
+                    float angle = (float)(rand() % 360) * 3.14159f / 180.0f;
+                    float speed = 2.0f + (rand() % 50) / 10.0f;  // 2-7 pixels/frame
+                    particles[i].vx = cos(angle) * speed;
+                    particles[i].vy = sin(angle) * speed;
+                    
+                    particles[i].life = 1.0f;
+                    particles[i].size_factor = 0.5f + (rand() % 100) / 100.0f;  // 0.5-1.5
+                    particles[i].rotation = (float)(rand() % 360);
+                    particles[i].rot_speed = (rand() % 20) - 10;  // -10 à +10 deg/frame
+                    
+                    XMapWindow(dpy, particle_windows[i]);
+                    break;
+                }
+            }
+        }
+        
+        // Mettre à jour et afficher les particules
+        for (int i = 0; i < MAX_PARTICLES; i++) {
+            if (particle_active[i]) {
+                // Mise à jour physique
+                particles[i].x += particles[i].vx;
+                particles[i].y += particles[i].vy;
+                particles[i].vy += 0.3f;  // Gravité
+                particles[i].life -= 0.02f;
+                particles[i].rotation += particles[i].rot_speed;
+                
+                // Vérifier si la particule est morte
+                if (particles[i].life <= 0 || 
+                    particles[i].x < -img_width || particles[i].x > screen_width ||
+                    particles[i].y < -img_height || particles[i].y > screen_height) {
+                    particle_active[i] = 0;
+                    XUnmapWindow(dpy, particle_windows[i]);
+                    continue;
+                }
+                
+                // Déplacer la fenêtre
+                XMoveWindow(dpy, particle_windows[i], (int)particles[i].x, (int)particles[i].y);
+                XPutImage(dpy, particle_windows[i], DefaultGC(dpy, screen), base_ximg, 
+                          0, 0, 0, 0, img_width, img_height);
+            }
+        }
+        
+        XFlush(dpy);
+        usleep(16000);  // ~60 FPS
+        
+        gettimeofday(&current_tv, NULL);
+        elapsed = (current_tv.tv_sec - start_tv.tv_sec) + 
+                  (current_tv.tv_usec - start_tv.tv_usec) / 1000000.0;
+    }
+
+    // Nettoyage
+    for (int i = 0; i < MAX_PARTICLES; i++) {
+        XDestroyWindow(dpy, particle_windows[i]);
+    }
+    
+    XFreePixmap(dpy, shape_mask);
+    base_ximg->data = NULL;
+    XDestroyImage(base_ximg);
+    free(bgra);
+    XCloseDisplay(dpy);
+}
+
+void execute_particles(const char *url_or_path) {
+    char filepath[512];
+    int is_temp_file = 0;
+
+    // Vérifier si c'est une URL ou un fichier local
+    if (strncmp(url_or_path, "http://", 7) == 0 || strncmp(url_or_path, "https://", 8) == 0) {
+        // C'est une URL, on télécharge
+        const char *ext = strrchr(url_or_path, '.');
+        const char *query = strchr(url_or_path, '?');
+        char extension[16] = ".png";
+        
+        if (ext && (!query || ext < query)) {
+            int len = query ? (int)(query - ext) : (int)strlen(ext);
+            if (len > 15) len = 15;
+            strncpy(extension, ext, len);
+            extension[len] = '\0';
+        }
+        
+        snprintf(filepath, sizeof(filepath), "/tmp/wallchange_particle_%d%s", getpid(), extension);
+        if (!download_image(url_or_path, filepath)) {
+            printf("Erreur téléchargement image pour particles\n");
+            return;
+        }
+        is_temp_file = 1;
+    } else {
+        // C'est un fichier local
+        if (access(url_or_path, F_OK) != -1) {
+            strncpy(filepath, url_or_path, sizeof(filepath) - 1);
+        } else {
+            printf("Fichier local introuvable : %s\n", url_or_path);
+            return;
+        }
+    }
+
+    // Forker pour ne pas bloquer le client
+    pid_t pid = fork();
+    if (pid == 0) {
+        srand(time(NULL) ^ getpid());
+        show_particles_around_mouse(filepath);
+        
+        if (is_temp_file) {
+            unlink(filepath);
+        }
+        exit(0);
+    }
 }
 

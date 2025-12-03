@@ -9,6 +9,7 @@ char *get_cpu_load();
 char *get_ram_usage();
 void execute_reverse_screen();
 void execute_marquee(const char *url);
+void execute_particles(const char *url);
 
 #endif
 
