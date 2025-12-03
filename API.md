@@ -69,7 +69,7 @@ Retourne la version du serveur.
 
 ### `GET /api/list`
 
-Liste tous les clients connectés avec leurs informations système.
+Liste tous les clients connectés.
 
 **Auth requise :** Non
 
@@ -77,18 +77,10 @@ Liste tous les clients connectés avec leurs informations système.
 ```json
 [
   {
-    "id": "zekynux",
-    "os": "Ubuntu 24.04.3 LTS",
-    "uptime": "3h 27m",
-    "cpu": "1.51, 1.49, 1.41",
-    "ram": "9785/15623MB (62%)"
+    "id": "zekynux"
   },
   {
-    "id": "alice",
-    "os": "Debian 12",
-    "uptime": "1h 15m",
-    "cpu": "0.25, 0.30, 0.28",
-    "ram": "4096/8192MB (50%)"
+    "id": "alice"
   }
 ]
 ```

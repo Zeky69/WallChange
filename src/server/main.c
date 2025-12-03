@@ -454,7 +454,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
         else if (mg_match(hm->uri, mg_str("/api/version"), NULL)) {
             mg_http_reply(c, 200, "Content-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\n", VERSION);
         }
-        // 1.6 API pour lister les clients connectés (avec infos système)
+        // 1.6 API pour lister les clients connectés
         else if (mg_match(hm->uri, mg_str("/api/list"), NULL)) {
             cJSON *json = cJSON_CreateArray();
             int count = 0;
@@ -463,15 +463,6 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                     const char *client_id = (char *)t->data;
                     cJSON *client_obj = cJSON_CreateObject();
                     cJSON_AddStringToObject(client_obj, "id", client_id);
-                    
-                    // Ajouter les infos système si disponibles
-                    struct client_info *info = get_client_info(client_id);
-                    if (info) {
-                        cJSON_AddStringToObject(client_obj, "os", info->os);
-                        cJSON_AddStringToObject(client_obj, "uptime", info->uptime);
-                        cJSON_AddStringToObject(client_obj, "cpu", info->cpu);
-                        cJSON_AddStringToObject(client_obj, "ram", info->ram);
-                    }
                     
                     cJSON_AddItemToArray(json, client_obj);
                     count++;
