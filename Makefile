@@ -3,6 +3,7 @@ VERSION := $(shell cat VERSION)
 CFLAGS = -O2 -DMG_TLS=2 -Iinclude -Isrc/common -DVERSION=\"$(VERSION)\"
 LDFLAGS = -lssl -lcrypto
 LDFLAGS_CLIENT = $(LDFLAGS) -lX11 -lXext -lXfixes -lXtst -lm
+LDFLAGS_SERVER = $(LDFLAGS) -lpthread -lm
 
 TARGET_CLIENT = wallchange
 TARGET_SERVER = server
@@ -17,7 +18,7 @@ $(TARGET_CLIENT): $(SRC_CLIENT)
 	$(CC) $(CFLAGS) -o $(TARGET_CLIENT) $(SRC_CLIENT) $(LDFLAGS_CLIENT)
 
 $(TARGET_SERVER): $(SRC_SERVER)
-	$(CC) $(CFLAGS) -o $(TARGET_SERVER) $(SRC_SERVER) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET_SERVER) $(SRC_SERVER) $(LDFLAGS_SERVER)
 
 src/common/mongoose.c:
 	@mkdir -p src/common
