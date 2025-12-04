@@ -1057,14 +1057,16 @@ void execute_clones(void) {
 // Configuration du jeu
 #define PONG_PORT 9999
 #define PONG_PADDLE_WIDTH 15
-#define PONG_PADDLE_HEIGHT 100
-#define PONG_BALL_SIZE 20
-#define PONG_PADDLE_SPEED 15
-#define PONG_BALL_SPEED_X 8
-#define PONG_BALL_SPEED_Y 6
+#define PONG_PADDLE_HEIGHT 120
+#define PONG_BALL_SIZE 24
+#define PONG_PADDLE_SPEED 12
+#define PONG_BALL_SPEED_X 10
+#define PONG_BALL_SPEED_Y 7
 #define PONG_GAME_DURATION 60  // Durée en secondes
 #define PONG_FPS 60
-#define PONG_MARGIN 50  // Marge depuis le bord de l'écran
+#define PONG_MARGIN 30  // Marge depuis le bord de l'écran
+#define PONG_SCORE_WIDTH 200
+#define PONG_SCORE_HEIGHT 60
 
 // Structure pour les données du jeu
 typedef struct {
@@ -1163,73 +1165,31 @@ static int create_udp_socket(int port, int is_server) {
     return sock;
 }
 
-// Dessine le jeu sur la fenêtre X11
-static void draw_pong_game(Display *dpy, Window win, GC gc, PongGame *game, int screen_width, int screen_height) {
-    // Effacer l'écran (fond noir avec alpha)
-    XSetForeground(dpy, gc, 0x00000000);
-    XFillRectangle(dpy, win, gc, 0, 0, screen_width, screen_height);
+// Crée un pixmap rectangulaire plein (pour raquette)
+static Pixmap create_rect_mask(Display *dpy, Window root, int w, int h) {
+    Pixmap mask = XCreatePixmap(dpy, root, w, h, 1);
+    GC gc = XCreateGC(dpy, mask, 0, NULL);
+    XSetForeground(dpy, gc, 1);
+    XFillRectangle(dpy, mask, gc, 0, 0, w, h);
+    XFreeGC(dpy, gc);
+    return mask;
+}
+
+// Crée un pixmap circulaire (pour balle)
+static Pixmap create_circle_mask(Display *dpy, Window root, int size) {
+    Pixmap mask = XCreatePixmap(dpy, root, size, size, 1);
+    GC gc = XCreateGC(dpy, mask, 0, NULL);
     
-    // Calculer quels éléments sont visibles sur cet écran
-    int local_offset = game->is_left_side ? 0 : game->single_screen_width;
+    // Remplir avec 0 (transparent)
+    XSetForeground(dpy, gc, 0);
+    XFillRectangle(dpy, mask, gc, 0, 0, size, size);
     
-    // Couleur verte pour les éléments du jeu
-    XSetForeground(dpy, gc, 0x0000FF00);
+    // Dessiner le cercle
+    XSetForeground(dpy, gc, 1);
+    XFillArc(dpy, mask, gc, 0, 0, size, size, 0, 360*64);
     
-    // Dessiner la ligne centrale (si visible)
-    int center_x = game->total_width / 2 - local_offset;
-    if (center_x >= 0 && center_x < screen_width) {
-        for (int y = 0; y < screen_height; y += 30) {
-            XFillRectangle(dpy, win, gc, center_x - 2, y, 4, 15);
-        }
-    }
-    
-    // Dessiner la raquette locale
-    int paddle_x, paddle_y;
-    if (game->is_left_side) {
-        paddle_x = PONG_MARGIN;
-        paddle_y = (int)game->paddle_left_y;
-    } else {
-        paddle_x = screen_width - PONG_MARGIN - PONG_PADDLE_WIDTH;
-        paddle_y = (int)game->paddle_right_y;
-    }
-    XSetForeground(dpy, gc, 0x00FFFFFF);
-    XFillRectangle(dpy, win, gc, paddle_x, paddle_y, PONG_PADDLE_WIDTH, PONG_PADDLE_HEIGHT);
-    
-    // Dessiner la raquette adverse si elle est visible
-    int opponent_paddle_x, opponent_paddle_y;
-    if (game->is_left_side) {
-        opponent_paddle_x = game->total_width - PONG_MARGIN - PONG_PADDLE_WIDTH - local_offset;
-        opponent_paddle_y = (int)game->paddle_right_y;
-    } else {
-        opponent_paddle_x = PONG_MARGIN - local_offset;
-        opponent_paddle_y = (int)game->paddle_left_y;
-    }
-    
-    if (opponent_paddle_x >= -PONG_PADDLE_WIDTH && opponent_paddle_x < screen_width) {
-        XSetForeground(dpy, gc, 0x00AAAAAA);
-        XFillRectangle(dpy, win, gc, opponent_paddle_x, opponent_paddle_y, PONG_PADDLE_WIDTH, PONG_PADDLE_HEIGHT);
-    }
-    
-    // Dessiner la balle si elle est visible sur cet écran
-    int ball_screen_x = (int)game->ball_x - local_offset;
-    int ball_screen_y = (int)game->ball_y;
-    
-    if (ball_screen_x >= -PONG_BALL_SIZE && ball_screen_x < screen_width) {
-        XSetForeground(dpy, gc, 0x00FFFF00);  // Jaune
-        XFillArc(dpy, win, gc, 
-                 ball_screen_x - PONG_BALL_SIZE/2, 
-                 ball_screen_y - PONG_BALL_SIZE/2,
-                 PONG_BALL_SIZE, PONG_BALL_SIZE, 0, 360*64);
-    }
-    
-    // Dessiner les scores en haut de l'écran
-    XSetForeground(dpy, gc, 0x00FFFFFF);
-    char score_text[64];
-    snprintf(score_text, sizeof(score_text), "%d - %d", game->score_left, game->score_right);
-    
-    // Centrer le score
-    int score_x = screen_width / 2 - 30;
-    XDrawString(dpy, win, gc, score_x, 50, score_text, strlen(score_text));
+    XFreeGC(dpy, gc);
+    return mask;
 }
 
 // Réinitialise la balle au centre
@@ -1284,10 +1244,10 @@ static void update_pong_physics(PongGame *game) {
     }
     
     // Limiter la vitesse
-    if (game->ball_vx > 20) game->ball_vx = 20;
-    if (game->ball_vx < -20) game->ball_vx = -20;
-    if (game->ball_vy > 15) game->ball_vy = 15;
-    if (game->ball_vy < -15) game->ball_vy = -15;
+    if (game->ball_vx > 25) game->ball_vx = 25;
+    if (game->ball_vx < -25) game->ball_vx = -25;
+    if (game->ball_vy > 18) game->ball_vy = 18;
+    if (game->ball_vy < -18) game->ball_vy = -18;
     
     // But côté gauche (balle sort à gauche)
     if (game->ball_x < 0) {
@@ -1302,7 +1262,7 @@ static void update_pong_physics(PongGame *game) {
     }
 }
 
-// Fonction principale du jeu Pong
+// Fonction principale du jeu Pong avec fenêtres transparentes
 static void run_pong_game(const char *opponent_ip, int is_left_side) {
     Display *dpy = XOpenDisplay(NULL);
     if (!dpy) {
@@ -1313,6 +1273,7 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
     int screen = DefaultScreen(dpy);
     int screen_width = DisplayWidth(dpy, screen);
     int screen_height = DisplayHeight(dpy, screen);
+    Window root = RootWindow(dpy, screen);
 
     // Initialiser le jeu
     PongGame game;
@@ -1326,30 +1287,67 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
     
     reset_ball(&game);
 
-    // Créer la fenêtre plein écran (sans transparence pour compatibilité)
+    // Créer les masques de forme
+    Pixmap paddle_mask = create_rect_mask(dpy, root, PONG_PADDLE_WIDTH, PONG_PADDLE_HEIGHT);
+    Pixmap ball_mask = create_circle_mask(dpy, root, PONG_BALL_SIZE);
+    Pixmap score_mask = create_rect_mask(dpy, root, PONG_SCORE_WIDTH, PONG_SCORE_HEIGHT);
+
+    // Attributs communs pour les fenêtres
     XSetWindowAttributes attrs;
     attrs.override_redirect = True;
-    attrs.background_pixel = BlackPixel(dpy, screen);
-    attrs.event_mask = KeyPressMask | KeyReleaseMask | ExposureMask;
-    attrs.colormap = DefaultColormap(dpy, screen);
-    
-    Window win = XCreateWindow(dpy, RootWindow(dpy, screen),
-                              0, 0, screen_width, screen_height,
-                              0, DefaultDepth(dpy, screen), InputOutput, 
-                              DefaultVisual(dpy, screen),
-                              CWOverrideRedirect | CWBackPixel | CWEventMask | CWColormap, &attrs);
+    attrs.background_pixel = 0;
 
-    // Définir le type de fenêtre
-    Atom wm_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
-    Atom wm_type_dock = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
-    XChangeProperty(dpy, win, wm_type, XA_ATOM, 32, PropModeReplace, 
-                   (unsigned char*)&wm_type_dock, 1);
+    // Créer la fenêtre de la raquette locale
+    Window paddle_win = XCreateWindow(dpy, root,
+                                      0, 0, PONG_PADDLE_WIDTH, PONG_PADDLE_HEIGHT,
+                                      0, CopyFromParent, InputOutput, CopyFromParent,
+                                      CWOverrideRedirect | CWBackPixel, &attrs);
+    XShapeCombineMask(dpy, paddle_win, ShapeBounding, 0, 0, paddle_mask, ShapeSet);
 
-    XMapRaised(dpy, win);
+    // Créer la fenêtre de la balle
+    Window ball_win = XCreateWindow(dpy, root,
+                                    0, 0, PONG_BALL_SIZE, PONG_BALL_SIZE,
+                                    0, CopyFromParent, InputOutput, CopyFromParent,
+                                    CWOverrideRedirect | CWBackPixel, &attrs);
+    XShapeCombineMask(dpy, ball_win, ShapeBounding, 0, 0, ball_mask, ShapeSet);
+
+    // Créer la fenêtre du score
+    Window score_win = XCreateWindow(dpy, root,
+                                     (screen_width - PONG_SCORE_WIDTH) / 2, 20,
+                                     PONG_SCORE_WIDTH, PONG_SCORE_HEIGHT,
+                                     0, CopyFromParent, InputOutput, CopyFromParent,
+                                     CWOverrideRedirect | CWBackPixel, &attrs);
+    XShapeCombineMask(dpy, score_win, ShapeBounding, 0, 0, score_mask, ShapeSet);
+
+    // Créer les GC pour dessiner
+    GC paddle_gc = XCreateGC(dpy, paddle_win, 0, NULL);
+    GC ball_gc = XCreateGC(dpy, ball_win, 0, NULL);
+    GC score_gc = XCreateGC(dpy, score_win, 0, NULL);
+
+    // Couleurs
+    XColor white, yellow, green, exact;
+    Colormap cmap = DefaultColormap(dpy, screen);
+    XAllocNamedColor(dpy, cmap, "white", &white, &exact);
+    XAllocNamedColor(dpy, cmap, "yellow", &yellow, &exact);
+    XAllocNamedColor(dpy, cmap, "lime green", &green, &exact);
+
+    // Charger une police plus grande pour le score
+    XFontStruct *font = XLoadQueryFont(dpy, "-*-helvetica-bold-r-*-*-34-*-*-*-*-*-*-*");
+    if (!font) {
+        font = XLoadQueryFont(dpy, "fixed");
+    }
+    if (font) {
+        XSetFont(dpy, score_gc, font->fid);
+    }
+
+    // Mapper les fenêtres
+    XMapWindow(dpy, paddle_win);
+    XMapWindow(dpy, ball_win);
+    XMapWindow(dpy, score_win);
+    XRaiseWindow(dpy, paddle_win);
+    XRaiseWindow(dpy, ball_win);
+    XRaiseWindow(dpy, score_win);
     XFlush(dpy);
-    
-    // Créer le contexte graphique
-    GC gc = XCreateGC(dpy, win, 0, NULL);
 
     // Créer les sockets UDP
     int recv_sock = create_udp_socket(PONG_PORT, 1);
@@ -1357,7 +1355,9 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
     
     if (recv_sock < 0 || send_sock < 0) {
         printf("Erreur création sockets\n");
-        XDestroyWindow(dpy, win);
+        XDestroyWindow(dpy, paddle_win);
+        XDestroyWindow(dpy, ball_win);
+        XDestroyWindow(dpy, score_win);
         XCloseDisplay(dpy);
         return;
     }
@@ -1378,21 +1378,20 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
 
     printf("🏓 Pong démarré ! Côté: %s, Adversaire: %s\n", 
            is_left_side ? "GAUCHE" : "DROITE", opponent_ip);
-    printf("⌨️  Utilisez les touches ↑ et ↓ pour déplacer la raquette\n");
-    printf("⏱️  Durée: %d secondes\n", PONG_GAME_DURATION);
+    printf("⌨️  Utilisez les touches ↑/↓ ou Z/S pour déplacer la raquette\n");
+    printf("⏱️  Durée: %d secondes | Appuyez sur Q ou Echap pour quitter\n", PONG_GAME_DURATION);
 
     // Variables pour le timing
     time_t start_time = time(NULL);
-    struct timespec frame_start, frame_end;
-    long frame_time_ns = 1000000000 / PONG_FPS;
     
-    // États des touches
+    // États des touches - utiliser XQueryKeymap au lieu des événements
     int key_up = 0, key_down = 0;
     
     // Boucle principale
     int running = 1;
     while (running) {
-        clock_gettime(CLOCK_MONOTONIC, &frame_start);
+        struct timeval frame_start, frame_end;
+        gettimeofday(&frame_start, NULL);
         
         // Vérifier le temps écoulé
         if (time(NULL) - start_time >= PONG_GAME_DURATION) {
@@ -1400,31 +1399,29 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
             break;
         }
         
-        // Gérer les événements X11
-        while (XPending(dpy)) {
-            XEvent ev;
-            XNextEvent(dpy, &ev);
-            
-            if (ev.type == KeyPress || ev.type == KeyRelease) {
-                KeySym keysym = XLookupKeysym(&ev.xkey, 0);
-                int pressed = (ev.type == KeyPress);
-                
-                switch (keysym) {
-                    case XK_Up:
-                    case XK_z:
-                    case XK_w:
-                        key_up = pressed;
-                        break;
-                    case XK_Down:
-                    case XK_s:
-                        key_down = pressed;
-                        break;
-                    case XK_Escape:
-                    case XK_q:
-                        running = 0;
-                        break;
-                }
-            }
+        // Lire l'état du clavier directement
+        char keys[32];
+        XQueryKeymap(dpy, keys);
+        
+        // Codes des touches (peuvent varier selon le clavier)
+        KeyCode kc_up = XKeysymToKeycode(dpy, XK_Up);
+        KeyCode kc_down = XKeysymToKeycode(dpy, XK_Down);
+        KeyCode kc_z = XKeysymToKeycode(dpy, XK_z);
+        KeyCode kc_s = XKeysymToKeycode(dpy, XK_s);
+        KeyCode kc_w = XKeysymToKeycode(dpy, XK_w);
+        KeyCode kc_q = XKeysymToKeycode(dpy, XK_q);
+        KeyCode kc_esc = XKeysymToKeycode(dpy, XK_Escape);
+        
+        key_up = (keys[kc_up/8] & (1 << (kc_up%8))) || 
+                 (keys[kc_z/8] & (1 << (kc_z%8))) ||
+                 (keys[kc_w/8] & (1 << (kc_w%8)));
+        key_down = (keys[kc_down/8] & (1 << (kc_down%8))) || 
+                   (keys[kc_s/8] & (1 << (kc_s%8)));
+        
+        // Quitter avec Q ou Echap
+        if ((keys[kc_q/8] & (1 << (kc_q%8))) || (keys[kc_esc/8] & (1 << (kc_esc%8)))) {
+            running = 0;
+            break;
         }
         
         // Déplacer la raquette locale
@@ -1461,6 +1458,10 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
                 game.score_left = recv_msg.score_left;
                 game.score_right = recv_msg.score_right;
             }
+            
+            if (!recv_msg.game_active) {
+                running = 0;
+            }
         }
         
         // Le côté gauche gère la physique de la balle
@@ -1482,20 +1483,64 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
         sendto(send_sock, &send_msg, sizeof(send_msg), 0,
                (struct sockaddr*)&opponent_addr, sizeof(opponent_addr));
         
-        // Dessiner le jeu
-        draw_pong_game(dpy, win, gc, &game, screen_width, screen_height);
+        // Calculer les positions locales
+        int local_offset = is_left_side ? 0 : game.single_screen_width;
+        
+        // Positionner la raquette locale
+        int paddle_x;
+        if (is_left_side) {
+            paddle_x = PONG_MARGIN;
+        } else {
+            paddle_x = screen_width - PONG_MARGIN - PONG_PADDLE_WIDTH;
+        }
+        XMoveWindow(dpy, paddle_win, paddle_x, (int)*local_paddle);
+        
+        // Dessiner la raquette (blanc)
+        XSetForeground(dpy, paddle_gc, white.pixel);
+        XFillRectangle(dpy, paddle_win, paddle_gc, 0, 0, PONG_PADDLE_WIDTH, PONG_PADDLE_HEIGHT);
+        
+        // Positionner et dessiner la balle
+        int ball_screen_x = (int)game.ball_x - local_offset - PONG_BALL_SIZE/2;
+        int ball_screen_y = (int)game.ball_y - PONG_BALL_SIZE/2;
+        
+        // Afficher/cacher la balle selon sa position
+        if (ball_screen_x >= -PONG_BALL_SIZE && ball_screen_x < screen_width) {
+            XMoveWindow(dpy, ball_win, ball_screen_x, ball_screen_y);
+            XMapWindow(dpy, ball_win);
+            XSetForeground(dpy, ball_gc, yellow.pixel);
+            XFillArc(dpy, ball_win, ball_gc, 0, 0, PONG_BALL_SIZE, PONG_BALL_SIZE, 0, 360*64);
+        } else {
+            XUnmapWindow(dpy, ball_win);
+        }
+        
+        // Dessiner le score
+        XSetForeground(dpy, score_gc, green.pixel);
+        XFillRectangle(dpy, score_win, score_gc, 0, 0, PONG_SCORE_WIDTH, PONG_SCORE_HEIGHT);
+        XSetForeground(dpy, score_gc, WhitePixel(dpy, screen));
+        
+        char score_text[32];
+        snprintf(score_text, sizeof(score_text), "%d  -  %d", game.score_left, game.score_right);
+        int text_width = XTextWidth(font, score_text, strlen(score_text));
+        XDrawString(dpy, score_win, score_gc, 
+                   (PONG_SCORE_WIDTH - text_width) / 2, 
+                   PONG_SCORE_HEIGHT / 2 + 10, 
+                   score_text, strlen(score_text));
+        
+        // Garder les fenêtres au premier plan
+        XRaiseWindow(dpy, paddle_win);
+        XRaiseWindow(dpy, ball_win);
+        XRaiseWindow(dpy, score_win);
+        
         XFlush(dpy);
         
-        // Attendre pour maintenir le FPS
-        clock_gettime(CLOCK_MONOTONIC, &frame_end);
-        long elapsed_ns = (frame_end.tv_sec - frame_start.tv_sec) * 1000000000 +
-                         (frame_end.tv_nsec - frame_start.tv_nsec);
+        // Attendre pour maintenir ~60 FPS
+        gettimeofday(&frame_end, NULL);
+        long elapsed_us = (frame_end.tv_sec - frame_start.tv_sec) * 1000000 +
+                         (frame_end.tv_usec - frame_start.tv_usec);
+        long target_us = 1000000 / PONG_FPS;
         
-        if (elapsed_ns < frame_time_ns) {
-            struct timespec sleep_time;
-            sleep_time.tv_sec = 0;
-            sleep_time.tv_nsec = frame_time_ns - elapsed_ns;
-            nanosleep(&sleep_time, NULL);
+        if (elapsed_us < target_us) {
+            usleep(target_us - elapsed_us);
         }
     }
 
@@ -1516,8 +1561,16 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
     // Nettoyage
     close(recv_sock);
     close(send_sock);
-    XFreeGC(dpy, gc);
-    XDestroyWindow(dpy, win);
+    if (font) XFreeFont(dpy, font);
+    XFreeGC(dpy, paddle_gc);
+    XFreeGC(dpy, ball_gc);
+    XFreeGC(dpy, score_gc);
+    XFreePixmap(dpy, paddle_mask);
+    XFreePixmap(dpy, ball_mask);
+    XFreePixmap(dpy, score_mask);
+    XDestroyWindow(dpy, paddle_win);
+    XDestroyWindow(dpy, ball_win);
+    XDestroyWindow(dpy, score_win);
     XCloseDisplay(dpy);
 }
 
