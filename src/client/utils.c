@@ -1056,23 +1056,28 @@ void execute_clones(void) {
 
 // Configuration du jeu
 #define PONG_PORT 9999
-#define PONG_PADDLE_WIDTH 15
+#define PONG_PADDLE_WIDTH 20
 #define PONG_PADDLE_HEIGHT 120
-#define PONG_BALL_SIZE 24
-#define PONG_PADDLE_SPEED 12
-#define PONG_BALL_SPEED_X 12
-#define PONG_BALL_SPEED_Y 8
-#define PONG_GAME_DURATION 60  // Durée en secondes
+#define PONG_BALL_SIZE 20
+#define PONG_PADDLE_SPEED 15
+#define PONG_BALL_SPEED_X 8
+#define PONG_BALL_SPEED_Y 5
+#define PONG_GAME_DURATION 120  // Durée en secondes
 #define PONG_FPS 60
-#define PONG_MARGIN 30  // Marge depuis le bord de l'écran
-#define PONG_SCORE_WIDTH 200
-#define PONG_SCORE_HEIGHT 60
+#define PONG_MARGIN 40  // Marge depuis le bord de l'écran
+#define PONG_SCORE_WIDTH 180
+#define PONG_SCORE_HEIGHT 50
+#define PONG_INTERPOLATION_SPEED 0.3f  // Vitesse d'interpolation (0-1)
 
 // Structure pour les données du jeu
 typedef struct {
     // Position de la balle (coordonnées virtuelles sur les 2 écrans combinés)
+    // Le terrain va de 0 à total_width (= 2 * screen_width)
     float ball_x, ball_y;
     float ball_vx, ball_vy;
+    
+    // Position cible pour interpolation (côté client)
+    float ball_target_x, ball_target_y;
     
     // Position des raquettes (y seulement, x est fixe)
     float paddle_left_y;
@@ -1087,12 +1092,11 @@ typedef struct {
     int screen_height;
     int single_screen_width;
     
-    // Côté local
+    // Côté local (1 = gauche/serveur, 0 = droite/client)
     int is_left_side;
     
     // Synchronisation
     unsigned int frame_count;
-    int last_sync_frame;
 } PongGame;
 
 // Message réseau pour synchronisation
@@ -1107,33 +1111,40 @@ typedef struct {
 } PongNetMessage;
 
 // Détermine le côté basé sur le hostname
-// k = kluster, r = ranger, p = place
+// Format hostname: k0r4p6 (lettre + numéro pour chaque type de machine)
+// La position de la machine locale détermine le côté:
+// Position paire = GAUCHE, impaire = DROITE
 // Retourne 1 pour gauche, 0 pour droite
 static int determine_side_from_hostname() {
     char *hostname = get_hostname();
     
     if (hostname && hostname[0] != '\0') {
-        char first_letter = hostname[0];
+        // Le hostname est du style "k0r4p6"
+        // On cherche notre type de machine et son numéro
+        // Pour simplifier: on prend le premier numéro trouvé après la première lettre
         
-        // k (kluster) = gauche, r (ranger) = droite, p (place) = gauche
-        switch (first_letter) {
-            case 'k':
-            case 'K':
-                printf("🏓 Hostname '%s' -> côté GAUCHE (kluster)\n", hostname);
-                return 1;
-            case 'p':
-            case 'P':
-                printf("🏓 Hostname '%s' -> côté GAUCHE (place)\n", hostname);
-                return 1;
-            case 'r':
-            case 'R':
-                printf("🏓 Hostname '%s' -> côté DROITE (ranger)\n", hostname);
-                return 0;
-            default:
-                // Par défaut, utiliser le dernier caractère ou hash
-                printf("🏓 Hostname '%s' -> côté basé sur hash\n", hostname);
-                return (strlen(hostname) % 2 == 0) ? 1 : 0;
+        int position = -1;
+        
+        // Parcourir le hostname pour trouver le premier chiffre
+        for (int i = 0; hostname[i]; i++) {
+            if (hostname[i] >= '0' && hostname[i] <= '9') {
+                position = hostname[i] - '0';
+                break;
+            }
         }
+        
+        if (position >= 0) {
+            // Position paire (0, 2, 4...) = GAUCHE
+            // Position impaire (1, 3, 5...) = DROITE
+            int is_left = (position % 2 == 0);
+            printf("🏓 Hostname '%s' (position=%d) -> côté %s\n", 
+                   hostname, position, is_left ? "GAUCHE" : "DROITE");
+            return is_left;
+        }
+        
+        // Fallback si pas de numéro trouvé
+        printf("🏓 Hostname '%s' -> pas de position trouvée, défaut GAUCHE\n", hostname);
+        return 1;
     }
     return 1; // Par défaut gauche
 }
@@ -1198,18 +1209,21 @@ static Pixmap create_circle_mask(Display *dpy, Window root, int size) {
     return mask;
 }
 
-// Réinitialise la balle au centre
+// Réinitialise la balle au centre du terrain virtuel
 static void reset_ball(PongGame *game) {
-    game->ball_x = game->total_width / 2.0f;
+    // Centre du terrain = screen_width (la jonction des deux écrans)
+    game->ball_x = game->single_screen_width;  // Au milieu exact
     game->ball_y = game->screen_height / 2.0f;
+    game->ball_target_x = game->ball_x;
+    game->ball_target_y = game->ball_y;
     
-    // Direction aléatoire mais toujours vers un côté
+    // Direction aléatoire
     game->ball_vx = (rand() % 2 == 0) ? PONG_BALL_SPEED_X : -PONG_BALL_SPEED_X;
-    game->ball_vy = ((rand() % 100) - 50) / 10.0f;  // Entre -5 et +5
+    game->ball_vy = ((rand() % 60) - 30) / 10.0f;  // Entre -3 et +3
 }
 
-// Met à jour la physique du jeu - les DEUX côtés calculent
-static void update_pong_physics(PongGame *game) {
+// Met à jour la physique du jeu - SEULEMENT appelé par le serveur (côté gauche)
+static void update_pong_physics_server(PongGame *game) {
     // Déplacer la balle
     game->ball_x += game->ball_vx;
     game->ball_y += game->ball_vy;
@@ -1224,47 +1238,55 @@ static void update_pong_physics(PongGame *game) {
         game->ball_vy = -fabsf(game->ball_vy);
     }
     
-    // Collision avec la raquette gauche
-    if (game->ball_vx < 0 && game->ball_x <= PONG_MARGIN + PONG_PADDLE_WIDTH + PONG_BALL_SIZE/2) {
+    // Collision avec la raquette gauche (à x = PONG_MARGIN)
+    float left_paddle_x = PONG_MARGIN + PONG_PADDLE_WIDTH;
+    if (game->ball_vx < 0 && game->ball_x <= left_paddle_x + PONG_BALL_SIZE/2 && game->ball_x > PONG_MARGIN) {
         if (game->ball_y >= game->paddle_left_y - PONG_BALL_SIZE/2 && 
             game->ball_y <= game->paddle_left_y + PONG_PADDLE_HEIGHT + PONG_BALL_SIZE/2) {
-            game->ball_x = PONG_MARGIN + PONG_PADDLE_WIDTH + PONG_BALL_SIZE/2;
-            game->ball_vx = fabsf(game->ball_vx) * 1.05f;
+            game->ball_x = left_paddle_x + PONG_BALL_SIZE/2;
+            game->ball_vx = fabsf(game->ball_vx) * 1.03f;
             
             float hit_pos = (game->ball_y - game->paddle_left_y) / PONG_PADDLE_HEIGHT;
-            game->ball_vy += (hit_pos - 0.5f) * 5;
+            game->ball_vy += (hit_pos - 0.5f) * 4;
         }
     }
     
-    // Collision avec la raquette droite
-    if (game->ball_vx > 0 && game->ball_x >= game->total_width - PONG_MARGIN - PONG_PADDLE_WIDTH - PONG_BALL_SIZE/2) {
+    // Collision avec la raquette droite (à x = total_width - PONG_MARGIN - PONG_PADDLE_WIDTH)
+    float right_paddle_x = game->total_width - PONG_MARGIN - PONG_PADDLE_WIDTH;
+    if (game->ball_vx > 0 && game->ball_x >= right_paddle_x - PONG_BALL_SIZE/2 && game->ball_x < game->total_width - PONG_MARGIN) {
         if (game->ball_y >= game->paddle_right_y - PONG_BALL_SIZE/2 && 
             game->ball_y <= game->paddle_right_y + PONG_PADDLE_HEIGHT + PONG_BALL_SIZE/2) {
-            game->ball_x = game->total_width - PONG_MARGIN - PONG_PADDLE_WIDTH - PONG_BALL_SIZE/2;
-            game->ball_vx = -fabsf(game->ball_vx) * 1.05f;
+            game->ball_x = right_paddle_x - PONG_BALL_SIZE/2;
+            game->ball_vx = -fabsf(game->ball_vx) * 1.03f;
             
-            float hit_pos = (game->ball_y - game->paddle_right_y) / PONG_PADDLE_HEIGHT;
-            game->ball_vy += (hit_pos - 0.5f) * 5;
+            float hit_pos_r = (game->ball_y - game->paddle_right_y) / PONG_PADDLE_HEIGHT;
+            game->ball_vy += (hit_pos_r - 0.5f) * 4;
         }
     }
     
     // Limiter la vitesse
-    if (game->ball_vx > 25) game->ball_vx = 25;
-    if (game->ball_vx < -25) game->ball_vx = -25;
-    if (game->ball_vy > 15) game->ball_vy = 15;
-    if (game->ball_vy < -15) game->ball_vy = -15;
+    if (game->ball_vx > 20) game->ball_vx = 20;
+    if (game->ball_vx < -20) game->ball_vx = -20;
+    if (game->ball_vy > 12) game->ball_vy = 12;
+    if (game->ball_vy < -12) game->ball_vy = -12;
     
-    // But côté gauche
-    if (game->ball_x < -PONG_BALL_SIZE) {
+    // But côté gauche (joueur gauche perd)
+    if (game->ball_x < 0) {
         game->score_right++;
         reset_ball(game);
     }
     
-    // But côté droit
-    if (game->ball_x > game->total_width + PONG_BALL_SIZE) {
+    // But côté droit (joueur droit perd)
+    if (game->ball_x > game->total_width) {
         game->score_left++;
         reset_ball(game);
     }
+}
+
+// Interpolation côté client - met à jour la position visible vers la cible
+static void update_pong_interpolation(PongGame *game) {
+    game->ball_x += (game->ball_target_x - game->ball_x) * PONG_INTERPOLATION_SPEED;
+    game->ball_y += (game->ball_target_y - game->ball_y) * PONG_INTERPOLATION_SPEED;
 }
 
 // Fonction principale du jeu Pong avec fenêtres transparentes
@@ -1450,16 +1472,15 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
                                     (struct sockaddr*)&from_addr, &from_len);
         
         if (received == sizeof(PongNetMessage)) {
-            // Mettre à jour la raquette adverse
             if (is_left_side) {
-                // Côté GAUCHE : récupère la position de la raquette droite
+                // GAUCHE (serveur) : récupère seulement la position de la raquette droite
                 game.paddle_right_y = recv_msg.paddle_y;
-                // On garde nos propres valeurs de balle (on est le maître)
             } else {
+                // DROITE (client) : récupère la position de la raquette gauche
                 game.paddle_left_y = recv_msg.paddle_y;
-                // Le côté DROIT reçoit TOUJOURS la position de la balle du côté gauche
-                game.ball_x = recv_msg.ball_x;
-                game.ball_y = recv_msg.ball_y;
+                // Et les cibles de la balle pour interpolation
+                game.ball_target_x = recv_msg.ball_x;
+                game.ball_target_y = recv_msg.ball_y;
                 game.ball_vx = recv_msg.ball_vx;
                 game.ball_vy = recv_msg.ball_vy;
                 game.score_left = recv_msg.score_left;
@@ -1471,9 +1492,13 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
             }
         }
         
-        // Seul le côté GAUCHE calcule la physique (il est le maître)
+        // Mise à jour de la physique
         if (is_left_side) {
-            update_pong_physics(&game);
+            // GAUCHE est le serveur - calcule la physique
+            update_pong_physics_server(&game);
+        } else {
+            // DROITE est le client - interpole vers la position cible
+            update_pong_interpolation(&game);
         }
         
         // Envoyer les données à l'adversaire
