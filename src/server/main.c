@@ -310,7 +310,8 @@ static void *pong_server_thread(void *arg) {
         }
         
         // Si le jeu est actif, mettre à jour la physique
-        if (s_pong_game.active && s_pong_game.left_connected && s_pong_game.right_connected) {
+        // La physique tourne dès qu'au moins un joueur est connecté
+        if (s_pong_game.active && (s_pong_game.left_connected || s_pong_game.right_connected)) {
             // Vérifier le temps
             if (time(NULL) - s_pong_game.start_time >= PONG_GAME_DURATION) {
                 s_pong_game.active = 0;
@@ -320,7 +321,7 @@ static void *pong_server_thread(void *arg) {
                 s_pong_game.frame_count++;
             }
             
-            // Envoyer l'état aux deux joueurs
+            // Préparer le message d'état
             PongNetMessage send_msg;
             send_msg.type = 0;
             send_msg.ball_x = s_pong_game.ball_x;
@@ -332,17 +333,21 @@ static void *pong_server_thread(void *arg) {
             send_msg.game_active = s_pong_game.active;
             send_msg.frame_count = s_pong_game.frame_count;
             
-            // Envoyer au joueur gauche avec la position de la raquette droite
-            send_msg.paddle_y = s_pong_game.paddle_right_y;
-            send_msg.is_left_side = 1;
-            sendto(s_pong_socket, &send_msg, sizeof(send_msg), 0,
-                   (struct sockaddr*)&s_pong_game.left_player, sizeof(s_pong_game.left_player));
+            // Envoyer au joueur gauche s'il est connecté
+            if (s_pong_game.left_connected) {
+                send_msg.paddle_y = s_pong_game.paddle_right_y;
+                send_msg.is_left_side = 1;
+                sendto(s_pong_socket, &send_msg, sizeof(send_msg), 0,
+                       (struct sockaddr*)&s_pong_game.left_player, sizeof(s_pong_game.left_player));
+            }
             
-            // Envoyer au joueur droit avec la position de la raquette gauche
-            send_msg.paddle_y = s_pong_game.paddle_left_y;
-            send_msg.is_left_side = 0;
-            sendto(s_pong_socket, &send_msg, sizeof(send_msg), 0,
-                   (struct sockaddr*)&s_pong_game.right_player, sizeof(s_pong_game.right_player));
+            // Envoyer au joueur droit s'il est connecté
+            if (s_pong_game.right_connected) {
+                send_msg.paddle_y = s_pong_game.paddle_left_y;
+                send_msg.is_left_side = 0;
+                sendto(s_pong_socket, &send_msg, sizeof(send_msg), 0,
+                       (struct sockaddr*)&s_pong_game.right_player, sizeof(s_pong_game.right_player));
+            }
         }
         
         // Maintenir ~60 FPS
