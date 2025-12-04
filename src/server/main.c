@@ -6,6 +6,11 @@
 #include <unistd.h>
 #include <time.h>
 #include <openssl/sha.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <pthread.h>
+#include <math.h>
 
 #ifndef VERSION
 #define VERSION "0.0.0"
@@ -112,6 +117,269 @@ static void generate_secure_token(char *token, size_t size) {
     }
     token[64] = '\0';
 }
+
+// ===================== PONG GAME SERVER =====================
+#define PONG_PORT 9999
+#define PONG_FPS 60
+#define PONG_BALL_SIZE 20
+#define PONG_PADDLE_WIDTH 15
+#define PONG_PADDLE_HEIGHT 120
+#define PONG_BALL_SPEED_X 8.0f
+#define PONG_MARGIN 30
+#define PONG_GAME_DURATION 60
+
+// Message réseau pour le jeu Pong
+typedef struct {
+    int type;  // 0 = état du jeu (serveur->client), 1 = position raquette (client->serveur)
+    float ball_x, ball_y;
+    float ball_vx, ball_vy;
+    float paddle_y;
+    int score_left, score_right;
+    int game_active;
+    int is_left_side;  // Pour identifier quel client envoie
+    unsigned int frame_count;
+} PongNetMessage;
+
+// État du jeu Pong géré par le serveur
+typedef struct {
+    int active;
+    float ball_x, ball_y;
+    float ball_vx, ball_vy;
+    float paddle_left_y, paddle_right_y;
+    int score_left, score_right;
+    int screen_width, screen_height;
+    int total_width;
+    unsigned int frame_count;
+    time_t start_time;
+    
+    // Adresses des deux joueurs
+    struct sockaddr_in left_player;
+    struct sockaddr_in right_player;
+    int left_connected, right_connected;
+} PongGameState;
+
+static PongGameState s_pong_game = {0};
+static int s_pong_socket = -1;
+static pthread_t s_pong_thread;
+static int s_pong_running = 0;
+
+// Réinitialise la balle au centre
+static void pong_reset_ball(PongGameState *game) {
+    game->ball_x = game->total_width / 2.0f;
+    game->ball_y = game->screen_height / 2.0f;
+    game->ball_vx = (rand() % 2 == 0) ? PONG_BALL_SPEED_X : -PONG_BALL_SPEED_X;
+    game->ball_vy = ((rand() % 60) - 30) / 10.0f;
+}
+
+// Met à jour la physique du jeu (appelé par le serveur)
+static void pong_update_physics(PongGameState *game) {
+    game->ball_x += game->ball_vx;
+    game->ball_y += game->ball_vy;
+    
+    // Rebond haut/bas
+    if (game->ball_y <= PONG_BALL_SIZE/2) {
+        game->ball_y = PONG_BALL_SIZE/2;
+        game->ball_vy = fabsf(game->ball_vy);
+    }
+    if (game->ball_y >= game->screen_height - PONG_BALL_SIZE/2) {
+        game->ball_y = game->screen_height - PONG_BALL_SIZE/2;
+        game->ball_vy = -fabsf(game->ball_vy);
+    }
+    
+    // Collision raquette gauche
+    float left_paddle_x = PONG_MARGIN + PONG_PADDLE_WIDTH;
+    if (game->ball_vx < 0 && game->ball_x <= left_paddle_x + PONG_BALL_SIZE/2 && game->ball_x > PONG_MARGIN) {
+        if (game->ball_y >= game->paddle_left_y - PONG_BALL_SIZE/2 && 
+            game->ball_y <= game->paddle_left_y + PONG_PADDLE_HEIGHT + PONG_BALL_SIZE/2) {
+            game->ball_x = left_paddle_x + PONG_BALL_SIZE/2;
+            game->ball_vx = fabsf(game->ball_vx) * 1.03f;
+            float hit_pos = (game->ball_y - game->paddle_left_y) / PONG_PADDLE_HEIGHT;
+            game->ball_vy += (hit_pos - 0.5f) * 4;
+        }
+    }
+    
+    // Collision raquette droite
+    float right_paddle_x = game->total_width - PONG_MARGIN - PONG_PADDLE_WIDTH;
+    if (game->ball_vx > 0 && game->ball_x >= right_paddle_x - PONG_BALL_SIZE/2 && game->ball_x < game->total_width - PONG_MARGIN) {
+        if (game->ball_y >= game->paddle_right_y - PONG_BALL_SIZE/2 && 
+            game->ball_y <= game->paddle_right_y + PONG_PADDLE_HEIGHT + PONG_BALL_SIZE/2) {
+            game->ball_x = right_paddle_x - PONG_BALL_SIZE/2;
+            game->ball_vx = -fabsf(game->ball_vx) * 1.03f;
+            float hit_pos = (game->ball_y - game->paddle_right_y) / PONG_PADDLE_HEIGHT;
+            game->ball_vy += (hit_pos - 0.5f) * 4;
+        }
+    }
+    
+    // Limiter vitesse
+    if (game->ball_vx > 20) game->ball_vx = 20;
+    if (game->ball_vx < -20) game->ball_vx = -20;
+    if (game->ball_vy > 12) game->ball_vy = 12;
+    if (game->ball_vy < -12) game->ball_vy = -12;
+    
+    // Buts
+    if (game->ball_x < 0) {
+        game->score_right++;
+        pong_reset_ball(game);
+    }
+    if (game->ball_x > game->total_width) {
+        game->score_left++;
+        pong_reset_ball(game);
+    }
+}
+
+// Thread principal du serveur Pong
+static void *pong_server_thread(void *arg) {
+    (void)arg;
+    
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(PONG_PORT);
+    
+    s_pong_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s_pong_socket < 0) {
+        perror("pong socket");
+        return NULL;
+    }
+    
+    int opt = 1;
+    setsockopt(s_pong_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    
+    if (bind(s_pong_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("pong bind");
+        close(s_pong_socket);
+        s_pong_socket = -1;
+        return NULL;
+    }
+    
+    // Non-bloquant
+    int flags = fcntl(s_pong_socket, F_GETFL, 0);
+    fcntl(s_pong_socket, F_SETFL, flags | O_NONBLOCK);
+    
+    printf("🏓 Serveur Pong UDP démarré sur port %d\n", PONG_PORT);
+    
+    struct timeval frame_start, frame_end;
+    
+    while (s_pong_running) {
+        gettimeofday(&frame_start, NULL);
+        
+        // Recevoir les messages des clients
+        PongNetMessage recv_msg;
+        struct sockaddr_in from_addr;
+        socklen_t from_len = sizeof(from_addr);
+        
+        while (1) {
+            ssize_t received = recvfrom(s_pong_socket, &recv_msg, sizeof(recv_msg), 0,
+                                        (struct sockaddr*)&from_addr, &from_len);
+            if (received <= 0) break;
+            
+            if (received == sizeof(PongNetMessage) && recv_msg.type == 1) {
+                // Message de position de raquette
+                if (recv_msg.is_left_side) {
+                    s_pong_game.paddle_left_y = recv_msg.paddle_y;
+                    if (!s_pong_game.left_connected) {
+                        s_pong_game.left_player = from_addr;
+                        s_pong_game.left_connected = 1;
+                        printf("🎮 Joueur GAUCHE connecté: %s\n", inet_ntoa(from_addr.sin_addr));
+                    }
+                } else {
+                    s_pong_game.paddle_right_y = recv_msg.paddle_y;
+                    if (!s_pong_game.right_connected) {
+                        s_pong_game.right_player = from_addr;
+                        s_pong_game.right_connected = 1;
+                        printf("🎮 Joueur DROITE connecté: %s\n", inet_ntoa(from_addr.sin_addr));
+                    }
+                }
+                
+                // Initialiser les dimensions si c'est le premier message
+                if (s_pong_game.screen_width == 0) {
+                    // On assume 1920x1080 par défaut, les clients peuvent envoyer leurs dimensions
+                    s_pong_game.screen_width = 1920;
+                    s_pong_game.screen_height = 1080;
+                    s_pong_game.total_width = s_pong_game.screen_width * 2;
+                    s_pong_game.paddle_left_y = (s_pong_game.screen_height - PONG_PADDLE_HEIGHT) / 2.0f;
+                    s_pong_game.paddle_right_y = (s_pong_game.screen_height - PONG_PADDLE_HEIGHT) / 2.0f;
+                    pong_reset_ball(&s_pong_game);
+                    s_pong_game.start_time = time(NULL);
+                    s_pong_game.active = 1;
+                    printf("🏓 Partie démarrée! Dimensions: %dx%d (total: %d)\n", 
+                           s_pong_game.screen_width, s_pong_game.screen_height, s_pong_game.total_width);
+                }
+            }
+        }
+        
+        // Si le jeu est actif, mettre à jour la physique
+        if (s_pong_game.active && s_pong_game.left_connected && s_pong_game.right_connected) {
+            // Vérifier le temps
+            if (time(NULL) - s_pong_game.start_time >= PONG_GAME_DURATION) {
+                s_pong_game.active = 0;
+                printf("🏆 Fin de partie! Score: %d - %d\n", s_pong_game.score_left, s_pong_game.score_right);
+            } else {
+                pong_update_physics(&s_pong_game);
+                s_pong_game.frame_count++;
+            }
+            
+            // Envoyer l'état aux deux joueurs
+            PongNetMessage send_msg;
+            send_msg.type = 0;
+            send_msg.ball_x = s_pong_game.ball_x;
+            send_msg.ball_y = s_pong_game.ball_y;
+            send_msg.ball_vx = s_pong_game.ball_vx;
+            send_msg.ball_vy = s_pong_game.ball_vy;
+            send_msg.score_left = s_pong_game.score_left;
+            send_msg.score_right = s_pong_game.score_right;
+            send_msg.game_active = s_pong_game.active;
+            send_msg.frame_count = s_pong_game.frame_count;
+            
+            // Envoyer au joueur gauche avec la position de la raquette droite
+            send_msg.paddle_y = s_pong_game.paddle_right_y;
+            send_msg.is_left_side = 1;
+            sendto(s_pong_socket, &send_msg, sizeof(send_msg), 0,
+                   (struct sockaddr*)&s_pong_game.left_player, sizeof(s_pong_game.left_player));
+            
+            // Envoyer au joueur droit avec la position de la raquette gauche
+            send_msg.paddle_y = s_pong_game.paddle_left_y;
+            send_msg.is_left_side = 0;
+            sendto(s_pong_socket, &send_msg, sizeof(send_msg), 0,
+                   (struct sockaddr*)&s_pong_game.right_player, sizeof(s_pong_game.right_player));
+        }
+        
+        // Maintenir ~60 FPS
+        gettimeofday(&frame_end, NULL);
+        long elapsed_us = (frame_end.tv_sec - frame_start.tv_sec) * 1000000 +
+                         (frame_end.tv_usec - frame_start.tv_usec);
+        long target_us = 1000000 / PONG_FPS;
+        if (elapsed_us < target_us) {
+            usleep(target_us - elapsed_us);
+        }
+    }
+    
+    if (s_pong_socket >= 0) {
+        close(s_pong_socket);
+        s_pong_socket = -1;
+    }
+    return NULL;
+}
+
+// Démarre le serveur Pong
+static void start_pong_server() {
+    if (s_pong_running) return;
+    
+    memset(&s_pong_game, 0, sizeof(s_pong_game));
+    srand(time(NULL));
+    s_pong_running = 1;
+    pthread_create(&s_pong_thread, NULL, pong_server_thread, NULL);
+}
+
+// Arrête le serveur Pong
+static void stop_pong_server() {
+    if (!s_pong_running) return;
+    s_pong_running = 0;
+    pthread_join(s_pong_thread, NULL);
+}
+
+// ===================== FIN PONG GAME SERVER =====================
 
 // Structure pour stocker les infos client
 #define MAX_CLIENTS 100
@@ -1108,11 +1376,17 @@ int main(int argc, char *argv[]) {
     char listen_on[64];
     snprintf(listen_on, sizeof(listen_on), "ws://0.0.0.0:%d", port);
 
-    printf("🚀 Serveur démarré sur \033[1;36m%s\033[0m\n\n", listen_on);
+    printf("🚀 Serveur démarré sur \033[1;36m%s\033[0m\n", listen_on);
+    
+    // Démarrer le serveur Pong UDP
+    start_pong_server();
+    
+    printf("\n");
     mg_http_listen(&mgr, listen_on, fn, NULL);
     
     for (;;) mg_mgr_poll(&mgr, 1000);
     
+    stop_pong_server();
     mg_mgr_free(&mgr);
     return 0;
 

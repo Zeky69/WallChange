@@ -62,6 +62,11 @@ static const char* get_ws_url() {
     return local_mode ? WS_URL_LOCAL : WS_URL_REMOTE;
 }
 
+// Retourne l'hostname du serveur (pour Pong UDP)
+static const char* get_server_host() {
+    return local_mode ? "localhost" : "wallchange.codeky.fr";
+}
+
 void set_admin_token(const char *token) {
     manual_token = token;
 }
@@ -281,8 +286,10 @@ static void handle_message(const char *msg, size_t len) {
             cJSON *from_item = cJSON_GetObjectItemCaseSensitive(json, "from");
             if (cJSON_IsString(from_item) && from_item->valuestring != NULL) {
                 printf("🏓 Commande pong reçue de: %s\n", from_item->valuestring);
+                // Se connecte au SERVEUR, pas à l'adversaire
                 // -1 pour déterminer automatiquement le côté via le hostname
-                execute_pong(from_item->valuestring, -1);
+                const char *server_host = get_server_host();
+                execute_pong(server_host, -1);
             }
             cJSON_Delete(json);
             return;
@@ -784,9 +791,10 @@ int send_pong_command(const char *target_user) {
     int ret = system(command);
     if (ret == 0) {
         printf("\n✅ Invitation Pong envoyée ! Démarrage du jeu...\n");
-        // Démarrer le jeu localement aussi
+        // Démarrer le jeu localement - se connecte au SERVEUR (pas à l'adversaire)
         // -1 pour déterminer automatiquement le côté via le hostname
-        execute_pong(target_user, -1);
+        const char *server_host = get_server_host();
+        execute_pong(server_host, -1);
         return 0;
     } else {
         printf("\n❌ Erreur lors de l'envoi de la commande pong.\n");

@@ -1092,22 +1092,23 @@ typedef struct {
     int screen_height;
     int single_screen_width;
     
-    // Côté local (1 = gauche/serveur, 0 = droite/client)
+    // Côté local (1 = gauche, 0 = droite)
     int is_left_side;
     
     // Synchronisation
     unsigned int frame_count;
 } PongGame;
 
-// Message réseau pour synchronisation
+// Message réseau pour synchronisation avec le SERVEUR
 typedef struct {
+    int type;  // 0 = état du jeu (serveur->client), 1 = position raquette (client->serveur)
     float ball_x, ball_y;
     float ball_vx, ball_vy;
-    float paddle_y;  // Position de la raquette de l'expéditeur
+    float paddle_y;
     int score_left, score_right;
     int game_active;
-    unsigned int frame_count;  // Pour synchronisation
-    int ball_owner;  // Qui contrôle la balle (0=gauche, 1=droite)
+    int is_left_side;  // Pour identifier quel client envoie
+    unsigned int frame_count;
 } PongNetMessage;
 
 // Détermine le côté basé sur le hostname
@@ -1389,13 +1390,13 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
         return;
     }
     
-    // Configurer l'adresse de l'adversaire
+    // Configurer l'adresse du SERVEUR (opponent_ip est maintenant le serveur)
     struct sockaddr_in opponent_addr;
     memset(&opponent_addr, 0, sizeof(opponent_addr));
     opponent_addr.sin_family = AF_INET;
     opponent_addr.sin_port = htons(PONG_PORT);
     
-    // Résoudre le hostname de l'adversaire
+    // Résoudre le hostname du serveur
     struct hostent *he = gethostbyname(opponent_ip);
     if (he) {
         memcpy(&opponent_addr.sin_addr, he->h_addr_list[0], he->h_length);
@@ -1403,7 +1404,7 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
         inet_pton(AF_INET, opponent_ip, &opponent_addr.sin_addr);
     }
 
-    printf("🏓 Pong démarré ! Côté: %s, Adversaire: %s\n", 
+    printf("🏓 Pong démarré ! Côté: %s, Serveur: %s\n", 
            is_left_side ? "GAUCHE" : "DROITE", opponent_ip);
     printf("⌨️  Utilisez les touches ↑/↓ ou Z/S pour déplacer la raquette\n");
     printf("⏱️  Durée: %d secondes | Appuyez sur Q ou Echap pour quitter\n", PONG_GAME_DURATION);
@@ -1463,7 +1464,18 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
                 *local_paddle = screen_height - PONG_PADDLE_HEIGHT;
         }
         
-        // Recevoir les données de l'adversaire
+        // Envoyer notre position de raquette AU SERVEUR
+        PongNetMessage send_msg;
+        memset(&send_msg, 0, sizeof(send_msg));
+        send_msg.type = 1;  // Type 1 = position de raquette
+        send_msg.paddle_y = *local_paddle;
+        send_msg.is_left_side = is_left_side;
+        send_msg.frame_count = game.frame_count++;
+        
+        sendto(send_sock, &send_msg, sizeof(send_msg), 0,
+               (struct sockaddr*)&opponent_addr, sizeof(opponent_addr));
+        
+        // Recevoir l'état du jeu DU SERVEUR
         PongNetMessage recv_msg;
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
@@ -1471,20 +1483,21 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
         ssize_t received = recvfrom(recv_sock, &recv_msg, sizeof(recv_msg), 0,
                                     (struct sockaddr*)&from_addr, &from_len);
         
-        if (received == sizeof(PongNetMessage)) {
+        if (received == sizeof(PongNetMessage) && recv_msg.type == 0) {
+            // Type 0 = état du jeu depuis le serveur
+            // Mettre à jour la cible de la balle pour interpolation
+            game.ball_target_x = recv_msg.ball_x;
+            game.ball_target_y = recv_msg.ball_y;
+            game.ball_vx = recv_msg.ball_vx;
+            game.ball_vy = recv_msg.ball_vy;
+            game.score_left = recv_msg.score_left;
+            game.score_right = recv_msg.score_right;
+            
+            // La raquette adverse
             if (is_left_side) {
-                // GAUCHE (serveur) : récupère seulement la position de la raquette droite
                 game.paddle_right_y = recv_msg.paddle_y;
             } else {
-                // DROITE (client) : récupère la position de la raquette gauche
                 game.paddle_left_y = recv_msg.paddle_y;
-                // Et les cibles de la balle pour interpolation
-                game.ball_target_x = recv_msg.ball_x;
-                game.ball_target_y = recv_msg.ball_y;
-                game.ball_vx = recv_msg.ball_vx;
-                game.ball_vy = recv_msg.ball_vy;
-                game.score_left = recv_msg.score_left;
-                game.score_right = recv_msg.score_right;
             }
             
             if (!recv_msg.game_active) {
@@ -1492,32 +1505,9 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
             }
         }
         
-        // Mise à jour de la physique
-        if (is_left_side) {
-            // GAUCHE est le serveur - calcule la physique
-            update_pong_physics_server(&game);
-        } else {
-            // DROITE est le client - interpole vers la position cible
-            update_pong_interpolation(&game);
-        }
-        
-        // Envoyer les données à l'adversaire
-        PongNetMessage send_msg;
-        send_msg.ball_x = game.ball_x;
-        send_msg.ball_y = game.ball_y;
-        send_msg.ball_vx = game.ball_vx;
-        send_msg.ball_vy = game.ball_vy;
-        send_msg.paddle_y = *local_paddle;
-        send_msg.score_left = game.score_left;
-        send_msg.score_right = game.score_right;
-        send_msg.game_active = running;
-        send_msg.ball_owner = is_left_side ? 0 : 1;
-        send_msg.frame_count = game.frame_count++;
-        
-        sendto(send_sock, &send_msg, sizeof(send_msg), 0,
-               (struct sockaddr*)&opponent_addr, sizeof(opponent_addr));
-        
-        // Calculer les positions locales
+        // Interpolation de la balle vers la position cible (pour les deux côtés maintenant)
+        update_pong_interpolation(&game);
+                // Calculer les positions locales
         int local_offset = is_left_side ? 0 : game.single_screen_width;
         
         // Positionner la raquette locale
