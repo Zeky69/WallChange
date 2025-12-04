@@ -1203,23 +1203,12 @@ static void reset_ball(PongGame *game) {
     game->ball_x = game->total_width / 2.0f;
     game->ball_y = game->screen_height / 2.0f;
     
-    // Direction aléatoire
+    // Direction aléatoire mais toujours vers un côté
     game->ball_vx = (rand() % 2 == 0) ? PONG_BALL_SPEED_X : -PONG_BALL_SPEED_X;
-    game->ball_vy = (rand() % 2 == 0) ? PONG_BALL_SPEED_Y : -PONG_BALL_SPEED_Y;
+    game->ball_vy = ((rand() % 100) - 50) / 10.0f;  // Entre -5 et +5
 }
 
-// Détermine qui "possède" la balle (qui doit calculer sa physique)
-// 0 = côté gauche, 1 = côté droit
-static int get_ball_owner(PongGame *game) {
-    // La balle appartient au côté où elle se trouve
-    if (game->ball_x < game->single_screen_width) {
-        return 0;  // Côté gauche
-    } else {
-        return 1;  // Côté droit
-    }
-}
-
-// Met à jour la physique du jeu - appelé par le côté qui possède la balle
+// Met à jour la physique du jeu - les DEUX côtés calculent
 static void update_pong_physics(PongGame *game) {
     // Déplacer la balle
     game->ball_x += game->ball_vx;
@@ -1228,60 +1217,51 @@ static void update_pong_physics(PongGame *game) {
     // Rebond sur les bords haut/bas
     if (game->ball_y <= PONG_BALL_SIZE/2) {
         game->ball_y = PONG_BALL_SIZE/2;
-        game->ball_vy = -game->ball_vy;
+        game->ball_vy = fabsf(game->ball_vy);
     }
     if (game->ball_y >= game->screen_height - PONG_BALL_SIZE/2) {
         game->ball_y = game->screen_height - PONG_BALL_SIZE/2;
-        game->ball_vy = -game->ball_vy;
+        game->ball_vy = -fabsf(game->ball_vy);
     }
     
-    // Collision avec la raquette gauche (seulement si on est le côté gauche)
-    if (game->is_left_side && game->ball_vx < 0) {
-        float paddle_right_edge = PONG_MARGIN + PONG_PADDLE_WIDTH;
-        if (game->ball_x - PONG_BALL_SIZE/2 <= paddle_right_edge && 
-            game->ball_x - PONG_BALL_SIZE/2 >= PONG_MARGIN) {
-            if (game->ball_y >= game->paddle_left_y - PONG_BALL_SIZE/2 && 
-                game->ball_y <= game->paddle_left_y + PONG_PADDLE_HEIGHT + PONG_BALL_SIZE/2) {
-                game->ball_x = paddle_right_edge + PONG_BALL_SIZE/2;
-                game->ball_vx = fabsf(game->ball_vx) * 1.05f;  // Toujours vers la droite
-                
-                // Effet selon position sur la raquette
-                float hit_pos = (game->ball_y - game->paddle_left_y) / PONG_PADDLE_HEIGHT;
-                game->ball_vy += (hit_pos - 0.5f) * 5;
-            }
+    // Collision avec la raquette gauche
+    if (game->ball_vx < 0 && game->ball_x <= PONG_MARGIN + PONG_PADDLE_WIDTH + PONG_BALL_SIZE/2) {
+        if (game->ball_y >= game->paddle_left_y - PONG_BALL_SIZE/2 && 
+            game->ball_y <= game->paddle_left_y + PONG_PADDLE_HEIGHT + PONG_BALL_SIZE/2) {
+            game->ball_x = PONG_MARGIN + PONG_PADDLE_WIDTH + PONG_BALL_SIZE/2;
+            game->ball_vx = fabsf(game->ball_vx) * 1.05f;
+            
+            float hit_pos = (game->ball_y - game->paddle_left_y) / PONG_PADDLE_HEIGHT;
+            game->ball_vy += (hit_pos - 0.5f) * 5;
         }
     }
     
-    // Collision avec la raquette droite (seulement si on est le côté droit)
-    if (!game->is_left_side && game->ball_vx > 0) {
-        float paddle_left_edge = game->total_width - PONG_MARGIN - PONG_PADDLE_WIDTH;
-        if (game->ball_x + PONG_BALL_SIZE/2 >= paddle_left_edge &&
-            game->ball_x + PONG_BALL_SIZE/2 <= game->total_width - PONG_MARGIN) {
-            if (game->ball_y >= game->paddle_right_y - PONG_BALL_SIZE/2 && 
-                game->ball_y <= game->paddle_right_y + PONG_PADDLE_HEIGHT + PONG_BALL_SIZE/2) {
-                game->ball_x = paddle_left_edge - PONG_BALL_SIZE/2;
-                game->ball_vx = -fabsf(game->ball_vx) * 1.05f;  // Toujours vers la gauche
-                
-                float hit_pos = (game->ball_y - game->paddle_right_y) / PONG_PADDLE_HEIGHT;
-                game->ball_vy += (hit_pos - 0.5f) * 5;
-            }
+    // Collision avec la raquette droite
+    if (game->ball_vx > 0 && game->ball_x >= game->total_width - PONG_MARGIN - PONG_PADDLE_WIDTH - PONG_BALL_SIZE/2) {
+        if (game->ball_y >= game->paddle_right_y - PONG_BALL_SIZE/2 && 
+            game->ball_y <= game->paddle_right_y + PONG_PADDLE_HEIGHT + PONG_BALL_SIZE/2) {
+            game->ball_x = game->total_width - PONG_MARGIN - PONG_PADDLE_WIDTH - PONG_BALL_SIZE/2;
+            game->ball_vx = -fabsf(game->ball_vx) * 1.05f;
+            
+            float hit_pos = (game->ball_y - game->paddle_right_y) / PONG_PADDLE_HEIGHT;
+            game->ball_vy += (hit_pos - 0.5f) * 5;
         }
     }
     
     // Limiter la vitesse
     if (game->ball_vx > 25) game->ball_vx = 25;
     if (game->ball_vx < -25) game->ball_vx = -25;
-    if (game->ball_vy > 18) game->ball_vy = 18;
-    if (game->ball_vy < -18) game->ball_vy = -18;
+    if (game->ball_vy > 15) game->ball_vy = 15;
+    if (game->ball_vy < -15) game->ball_vy = -15;
     
-    // But côté gauche (balle sort à gauche) - détecté par le côté gauche
-    if (game->is_left_side && game->ball_x < -PONG_BALL_SIZE) {
+    // But côté gauche
+    if (game->ball_x < -PONG_BALL_SIZE) {
         game->score_right++;
         reset_ball(game);
     }
     
-    // But côté droit (balle sort à droite) - détecté par le côté droit
-    if (!game->is_left_side && game->ball_x > game->total_width + PONG_BALL_SIZE) {
+    // But côté droit
+    if (game->ball_x > game->total_width + PONG_BALL_SIZE) {
         game->score_left++;
         reset_ball(game);
     }
@@ -1472,27 +1452,16 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
         if (received == sizeof(PongNetMessage)) {
             // Mettre à jour la raquette adverse
             if (is_left_side) {
+                // Côté GAUCHE : récupère la position de la raquette droite
                 game.paddle_right_y = recv_msg.paddle_y;
-                // Si la balle vient de l'autre côté (va vers nous), on prend le contrôle
-                if (recv_msg.ball_owner == 1 && recv_msg.ball_vx < 0) {
-                    // La balle arrive de droite vers gauche, on synchronise
-                    game.ball_x = recv_msg.ball_x;
-                    game.ball_y = recv_msg.ball_y;
-                    game.ball_vx = recv_msg.ball_vx;
-                    game.ball_vy = recv_msg.ball_vy;
-                }
-                game.score_left = recv_msg.score_left;
-                game.score_right = recv_msg.score_right;
+                // On garde nos propres valeurs de balle (on est le maître)
             } else {
                 game.paddle_left_y = recv_msg.paddle_y;
-                // Si la balle vient de l'autre côté (va vers nous), on prend le contrôle
-                if (recv_msg.ball_owner == 0 && recv_msg.ball_vx > 0) {
-                    // La balle arrive de gauche vers droite, on synchronise
-                    game.ball_x = recv_msg.ball_x;
-                    game.ball_y = recv_msg.ball_y;
-                    game.ball_vx = recv_msg.ball_vx;
-                    game.ball_vy = recv_msg.ball_vy;
-                }
+                // Le côté DROIT reçoit TOUJOURS la position de la balle du côté gauche
+                game.ball_x = recv_msg.ball_x;
+                game.ball_y = recv_msg.ball_y;
+                game.ball_vx = recv_msg.ball_vx;
+                game.ball_vy = recv_msg.ball_vy;
                 game.score_left = recv_msg.score_left;
                 game.score_right = recv_msg.score_right;
             }
@@ -1502,13 +1471,10 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
             }
         }
         
-        // Déterminer qui contrôle la balle
-        int ball_owner = get_ball_owner(&game);
-        int i_own_ball = (is_left_side && ball_owner == 0) || (!is_left_side && ball_owner == 1);
-        
-        // Mettre à jour la physique seulement si on possède la balle
-        // OU si la balle est dans notre moitié d'écran
-        update_pong_physics(&game);
+        // Seul le côté GAUCHE calcule la physique (il est le maître)
+        if (is_left_side) {
+            update_pong_physics(&game);
+        }
         
         // Envoyer les données à l'adversaire
         PongNetMessage send_msg;
