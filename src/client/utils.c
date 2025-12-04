@@ -737,3 +737,306 @@ void execute_particles(const char *url_or_path) {
     }
 }
 
+// ============== MOUSE CLONES ==============
+
+#include <X11/Xcursor/Xcursor.h>
+#include <X11/extensions/Xfixes.h>
+
+#define NUM_CLONES 150
+#define CLONE_SIZE 24  // Taille du curseur clone
+
+// Structure pour un clone de souris
+typedef struct {
+    float x, y;           // Position
+    float offset_x, offset_y;  // Décalage par rapport à la vraie souris
+    float delay;          // Délai de suivi (0-1)
+    float target_x, target_y;  // Position cible
+    int follow_mouse;     // 1 = suit la souris, 0 = position fixe aléatoire
+} MouseClone;
+
+// Capture l'image du curseur actuel
+static unsigned char* capture_cursor_image(Display *dpy, int *width, int *height) {
+    XFixesCursorImage *cursor = XFixesGetCursorImage(dpy);
+    if (!cursor) {
+        printf("Impossible de capturer le curseur\n");
+        return NULL;
+    }
+    
+    *width = cursor->width;
+    *height = cursor->height;
+    
+    // Convertir les pixels (ARGB format) en RGBA
+    unsigned char *rgba = malloc(cursor->width * cursor->height * 4);
+    if (!rgba) {
+        XFree(cursor);
+        return NULL;
+    }
+    
+    for (int i = 0; i < cursor->width * cursor->height; i++) {
+        unsigned long pixel = cursor->pixels[i];
+        rgba[i * 4 + 0] = (pixel >> 16) & 0xFF;  // R
+        rgba[i * 4 + 1] = (pixel >> 8) & 0xFF;   // G
+        rgba[i * 4 + 2] = pixel & 0xFF;          // B
+        rgba[i * 4 + 3] = (pixel >> 24) & 0xFF;  // A
+    }
+    
+    XFree(cursor);
+    return rgba;
+}
+
+// Affiche les clones de souris
+static void show_mouse_clones(void) {
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) {
+        printf("Erreur ouverture display X11\n");
+        return;
+    }
+
+    // Vérifier XFixes
+    int event_base, error_base;
+    if (!XFixesQueryExtension(dpy, &event_base, &error_base)) {
+        printf("Extension XFixes non disponible\n");
+        XCloseDisplay(dpy);
+        return;
+    }
+
+    int screen = DefaultScreen(dpy);
+    int screen_width = DisplayWidth(dpy, screen);
+    int screen_height = DisplayHeight(dpy, screen);
+    Window root = RootWindow(dpy, screen);
+
+    // Capturer l'image du curseur
+    int cursor_width, cursor_height;
+    unsigned char *cursor_rgba = capture_cursor_image(dpy, &cursor_width, &cursor_height);
+    if (!cursor_rgba) {
+        // Fallback : créer un curseur simple (flèche)
+        cursor_width = CLONE_SIZE;
+        cursor_height = CLONE_SIZE;
+        cursor_rgba = malloc(CLONE_SIZE * CLONE_SIZE * 4);
+        memset(cursor_rgba, 0, CLONE_SIZE * CLONE_SIZE * 4);
+        
+        // Dessiner une flèche simple
+        for (int y = 0; y < CLONE_SIZE; y++) {
+            for (int x = 0; x < y && x < CLONE_SIZE; x++) {
+                int idx = (y * CLONE_SIZE + x) * 4;
+                cursor_rgba[idx + 0] = 0;    // R
+                cursor_rgba[idx + 1] = 0;    // G
+                cursor_rgba[idx + 2] = 0;    // B
+                cursor_rgba[idx + 3] = 255;  // A
+            }
+        }
+    }
+
+    // Redimensionner si nécessaire
+    unsigned char *img = cursor_rgba;
+    int img_width = cursor_width;
+    int img_height = cursor_height;
+    
+    if (cursor_width != CLONE_SIZE || cursor_height != CLONE_SIZE) {
+        img = resize_image_rgba(cursor_rgba, cursor_width, cursor_height, CLONE_SIZE, CLONE_SIZE);
+        free(cursor_rgba);
+        if (!img) {
+            XCloseDisplay(dpy);
+            return;
+        }
+        img_width = CLONE_SIZE;
+        img_height = CLONE_SIZE;
+    }
+
+    // Convertir RGBA -> BGRA pour X11
+    unsigned char *bgra = rgba_to_bgra(img, img_width, img_height);
+    
+    // Créer le masque de transparence
+    Pixmap shape_mask = create_shape_mask(dpy, root, img, img_width, img_height);
+    free(img);
+    
+    if (!bgra) {
+        XFreePixmap(dpy, shape_mask);
+        XCloseDisplay(dpy);
+        return;
+    }
+
+    // Créer l'image X11
+    XImage *ximg = XCreateImage(dpy, DefaultVisual(dpy, screen), DefaultDepth(dpy, screen),
+                                ZPixmap, 0, (char *)bgra, img_width, img_height, 32, 0);
+
+    // Initialiser les clones - allocation dynamique pour 1000 clones
+    MouseClone *clones = malloc(NUM_CLONES * sizeof(MouseClone));
+    Window *clone_windows = malloc(NUM_CLONES * sizeof(Window));
+    
+    if (!clones || !clone_windows) {
+        free(clones);
+        free(clone_windows);
+        XFreePixmap(dpy, shape_mask);
+        ximg->data = NULL;
+        XDestroyImage(ximg);
+        free(bgra);
+        XCloseDisplay(dpy);
+        return;
+    }
+    
+    // Position initiale de la souris
+    Window root_return, child_return;
+    int mouse_x, mouse_y, win_x, win_y;
+    unsigned int mask;
+    XQueryPointer(dpy, root, &root_return, &child_return, &mouse_x, &mouse_y, &win_x, &win_y, &mask);
+    
+    for (int i = 0; i < NUM_CLONES; i++) {
+        float angle = (float)(rand() % 360) * 3.14159f / 180.0f;
+        float distance;
+        float delay;
+        int follow = 1;
+        
+        if (i < 5) {
+            // 5 clones suivent EXACTEMENT la souris (indétectable)
+            distance = 0;
+            delay = 1.0f;
+            follow = 1;
+        } else if (i < 20) {
+            // 15 clones très proches avec réponse instantanée
+            distance = 10.0f + (rand() % 40);  // 10-50 pixels
+            delay = 0.5f + (rand() % 50) / 100.0f;  // 0.5-1.0 (très rapide)
+            follow = 1;
+        } else if (i < 50) {
+            // 30 clones proches rapides
+            distance = 30.0f + (rand() % 100);  // 30-130 pixels
+            delay = 0.2f + (rand() % 40) / 100.0f;  // 0.2-0.6
+            follow = 1;
+        } else if (i < 90) {
+            // 40 clones qui suivent avec délai
+            distance = 50.0f + (rand() % 200);  // 50-250 pixels
+            delay = 0.1f + (rand() % 20) / 100.0f;  // 0.1-0.3
+            follow = 1;
+        } else {
+            // 60 clones dispersés sur TOUT l'écran (position aléatoire fixe ou lent)
+            // Ils bougent lentement ou restent fixes pour créer du bruit visuel
+            clones[i].x = rand() % screen_width;
+            clones[i].y = rand() % screen_height;
+            clones[i].offset_x = 0;
+            clones[i].offset_y = 0;
+            clones[i].target_x = clones[i].x;
+            clones[i].target_y = clones[i].y;
+            clones[i].delay = 0.02f + (rand() % 5) / 100.0f;  // Très lent
+            clones[i].follow_mouse = (rand() % 3 == 0) ? 1 : 0;  // 1/3 suivent lentement
+            
+            if (clones[i].follow_mouse) {
+                clones[i].offset_x = (rand() % screen_width) - screen_width/2;
+                clones[i].offset_y = (rand() % screen_height) - screen_height/2;
+            }
+            
+            XSetWindowAttributes attrs;
+            attrs.override_redirect = True;
+            attrs.background_pixel = 0;
+            
+            clone_windows[i] = XCreateWindow(dpy, root,
+                                             (int)clones[i].x, (int)clones[i].y,
+                                             img_width, img_height,
+                                             0, CopyFromParent, InputOutput, CopyFromParent,
+                                             CWOverrideRedirect | CWBackPixel, &attrs);
+            
+            XShapeCombineMask(dpy, clone_windows[i], ShapeBounding, 0, 0, shape_mask, ShapeSet);
+            XMapWindow(dpy, clone_windows[i]);
+            continue;
+        }
+        
+        clones[i].offset_x = cos(angle) * distance;
+        clones[i].offset_y = sin(angle) * distance;
+        clones[i].x = mouse_x + clones[i].offset_x;
+        clones[i].y = mouse_y + clones[i].offset_y;
+        clones[i].target_x = clones[i].x;
+        clones[i].target_y = clones[i].y;
+        clones[i].delay = delay;
+        clones[i].follow_mouse = follow;
+        
+        XSetWindowAttributes attrs;
+        attrs.override_redirect = True;
+        attrs.background_pixel = 0;
+        
+        clone_windows[i] = XCreateWindow(dpy, root,
+                                         (int)clones[i].x, (int)clones[i].y,
+                                         img_width, img_height,
+                                         0, CopyFromParent, InputOutput, CopyFromParent,
+                                         CWOverrideRedirect | CWBackPixel, &attrs);
+        
+        // Appliquer le masque de transparence
+        XShapeCombineMask(dpy, clone_windows[i], ShapeBounding, 0, 0, shape_mask, ShapeSet);
+        XMapWindow(dpy, clone_windows[i]);
+    }
+
+    // Cacher le vrai curseur
+    Cursor invisible_cursor;
+    Pixmap cursor_pixmap = XCreatePixmap(dpy, root, 1, 1, 1);
+    XColor black = {0};
+    invisible_cursor = XCreatePixmapCursor(dpy, cursor_pixmap, cursor_pixmap, &black, &black, 0, 0);
+    XDefineCursor(dpy, root, invisible_cursor);
+    XFreePixmap(dpy, cursor_pixmap);
+
+    // Animation pendant 5 secondes
+    struct timeval start_tv, current_tv;
+    gettimeofday(&start_tv, NULL);
+    double elapsed = 0.0;
+    
+    while (elapsed < 5.0) {
+        // Obtenir la position de la souris
+        XQueryPointer(dpy, root, &root_return, &child_return, &mouse_x, &mouse_y, &win_x, &win_y, &mask);
+        
+        // Mettre à jour chaque clone
+        for (int i = 0; i < NUM_CLONES; i++) {
+            if (clones[i].follow_mouse) {
+                // Nouvelle cible = position souris + décalage
+                clones[i].target_x = mouse_x + clones[i].offset_x;
+                clones[i].target_y = mouse_y + clones[i].offset_y;
+            }
+            // Sinon la cible reste sa position actuelle (fixe ou mouvement aléatoire)
+            
+            // Interpolation douce vers la cible (effet de traîne)
+            float lerp = clones[i].delay;
+            clones[i].x += (clones[i].target_x - clones[i].x) * lerp;
+            clones[i].y += (clones[i].target_y - clones[i].y) * lerp;
+            
+            // Limiter aux bords de l'écran
+            if (clones[i].x < 0) clones[i].x = 0;
+            if (clones[i].x > screen_width - img_width) clones[i].x = screen_width - img_width;
+            if (clones[i].y < 0) clones[i].y = 0;
+            if (clones[i].y > screen_height - img_height) clones[i].y = screen_height - img_height;
+            
+            // Déplacer la fenêtre
+            XMoveWindow(dpy, clone_windows[i], (int)clones[i].x, (int)clones[i].y);
+            XPutImage(dpy, clone_windows[i], DefaultGC(dpy, screen), ximg, 
+                      0, 0, 0, 0, img_width, img_height);
+        }
+        
+        XFlush(dpy);
+        usleep(8000);  // ~120 FPS pour plus de fluidité
+        
+        gettimeofday(&current_tv, NULL);
+        elapsed = (current_tv.tv_sec - start_tv.tv_sec) + 
+                  (current_tv.tv_usec - start_tv.tv_usec) / 1000000.0;
+    }
+
+    // Restaurer le curseur normal
+    XUndefineCursor(dpy, root);
+    XFreeCursor(dpy, invisible_cursor);
+
+    // Nettoyage
+    for (int i = 0; i < NUM_CLONES; i++) {
+        XDestroyWindow(dpy, clone_windows[i]);
+    }
+    
+    free(clones);
+    free(clone_windows);
+    XFreePixmap(dpy, shape_mask);
+    ximg->data = NULL;
+    XDestroyImage(ximg);
+    free(bgra);
+    XCloseDisplay(dpy);
+}
+
+void execute_clones(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        srand(time(NULL) ^ getpid());
+        show_mouse_clones();
+        exit(0);
+    }
+}

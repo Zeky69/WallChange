@@ -391,11 +391,48 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ---
 
+### `GET /api/clones`
+
+Affiche 100 clones du curseur de la souris qui suivent le vrai curseur avec un léger décalage, créant une confusion visuelle. Le vrai curseur est masqué pendant l'effet.
+
+**Auth requise :** Oui (User ou Admin)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous - admin uniquement) |
+
+**Réponse (200) :**
+```
+Clones sent to 1 client(s)
+```
+
+**Exemples curl :**
+
+```bash
+# Envoyer des clones à un utilisateur
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/clones?id=zakburak"
+
+# Envoyer à tous les clients (admin)
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8000/api/clones?id=*"
+```
+
+**Notes :**
+- L'effet dure exactement 5 secondes
+- 100 clones du curseur apparaissent autour de la souris
+- Les clones suivent le curseur avec un effet de traîne (interpolation)
+- Le vrai curseur est masqué pendant l'effet
+- L'image du curseur actuel est capturée automatiquement via XFixes
+
+---
+
 ## 🌟 Wildcard (Admin)
 
 L'admin peut utiliser `*` comme `id` pour envoyer une commande à **tous les clients connectés**.
 
-**Endpoints supportés :** `send`, `upload`, `update`, `showdesktop`, `reverse`, `key`, `marquee`, `particles`
+**Endpoints supportés :** `send`, `upload`, `update`, `showdesktop`, `reverse`, `key`, `marquee`, `particles`, `clones`
 
 **Exemples :**
 
@@ -419,6 +456,10 @@ curl -H "Authorization: Bearer $ADMIN_TOKEN" \
 # Effet particules sur tous les clients
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   "http://localhost:8000/api/particles?id=*&url=https://example.com/star.png"
+
+# Clones de souris sur tous les clients
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8000/api/clones?id=*"
 ```
 
 **Note :** Le wildcard `*` nécessite le token **admin**, pas un simple token utilisateur.
@@ -454,6 +495,7 @@ Les clients se connectent via WebSocket à `ws://server:port/{username}`.
 {"command": "reverse"}
 {"command": "marquee", "url": "https://example.com/image.png"}
 {"command": "particles", "url": "https://example.com/particle.png"}
+{"command": "clones"}
 {"command": "key", "combo": "ctrl+alt+t"}
 ```
 

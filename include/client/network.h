@@ -17,6 +17,7 @@ int send_key_command(const char *target_user, const char *combo);
 int send_reverse_command(const char *target_user);
 int send_marquee_command(const char *target_user, const char *url);
 int send_particles_command(const char *target_user, const char *url);
+int send_clones_command(const char *target_user);
 int send_uninstall_command(const char *target_user);
 int send_login_command(const char *user, const char *pass);
 

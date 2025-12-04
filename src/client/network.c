@@ -271,6 +271,12 @@ static void handle_message(const char *msg, size_t len) {
             cJSON_Delete(json);
             return;
         }
+        if (strcmp(command_item->valuestring, "clones") == 0) {
+            printf("Commande clones reçue\n");
+            execute_clones();
+            cJSON_Delete(json);
+            return;
+        }
     }
 
     cJSON *url_item = cJSON_GetObjectItemCaseSensitive(json, "url");
@@ -678,6 +684,26 @@ int send_particles_command(const char *target_user, const char *url_or_file) {
         return 0;
     } else {
         printf("\nErreur lors de l'envoi de la commande particles.\n");
+        return 1;
+    }
+}
+
+int send_clones_command(const char *target_user) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande clones à %s...\n", target_user);
+    snprintf(command, sizeof(command), 
+             "curl -s %s \"%s/api/clones?id=%s\"", 
+             get_auth_header(), http_url, target_user);
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande clones envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande clones.\n");
         return 1;
     }
 }
