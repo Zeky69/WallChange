@@ -138,6 +138,7 @@ typedef struct {
     int game_active;
     int is_left_side;  // Pour identifier quel client envoie
     unsigned int frame_count;
+    int screen_width, screen_height;  // Dimensions de l'écran du client
 } PongNetMessage;
 
 // État du jeu Pong géré par le serveur
@@ -278,15 +279,15 @@ static void *pong_server_thread(void *arg) {
                 // Message de position de raquette
                 if (recv_msg.is_left_side) {
                     s_pong_game.paddle_left_y = recv_msg.paddle_y;
+                    s_pong_game.left_player = from_addr;
                     if (!s_pong_game.left_connected) {
-                        s_pong_game.left_player = from_addr;
                         s_pong_game.left_connected = 1;
                         printf("🎮 Joueur GAUCHE connecté: %s\n", inet_ntoa(from_addr.sin_addr));
                     }
                 } else {
                     s_pong_game.paddle_right_y = recv_msg.paddle_y;
+                    s_pong_game.right_player = from_addr;
                     if (!s_pong_game.right_connected) {
-                        s_pong_game.right_player = from_addr;
                         s_pong_game.right_connected = 1;
                         printf("🎮 Joueur DROITE connecté: %s\n", inet_ntoa(from_addr.sin_addr));
                     }
@@ -294,9 +295,14 @@ static void *pong_server_thread(void *arg) {
                 
                 // Initialiser les dimensions si c'est le premier message
                 if (s_pong_game.screen_width == 0) {
-                    // On assume 1920x1080 par défaut, les clients peuvent envoyer leurs dimensions
-                    s_pong_game.screen_width = 1920;
-                    s_pong_game.screen_height = 1080;
+                    // Utiliser les dimensions envoyées par le client
+                    if (recv_msg.screen_width > 0 && recv_msg.screen_height > 0) {
+                        s_pong_game.screen_width = recv_msg.screen_width;
+                        s_pong_game.screen_height = recv_msg.screen_height;
+                    } else {
+                        s_pong_game.screen_width = 1920;
+                        s_pong_game.screen_height = 1080;
+                    }
                     s_pong_game.total_width = s_pong_game.screen_width * 2;
                     s_pong_game.paddle_left_y = (s_pong_game.screen_height - PONG_PADDLE_HEIGHT) / 2.0f;
                     s_pong_game.paddle_right_y = (s_pong_game.screen_height - PONG_PADDLE_HEIGHT) / 2.0f;

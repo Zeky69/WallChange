@@ -1109,84 +1109,136 @@ typedef struct {
     int game_active;
     int is_left_side;  // Pour identifier quel client envoie
     unsigned int frame_count;
+    int screen_width, screen_height;  // Dimensions de l'écran du client
 } PongNetMessage;
 
-// Détermine le côté basé sur le hostname
-// Format hostname: kX-rY-pZ ou kXrYpZ (ex: k0-r4-p6 ou k0r4p6)
-// k = cluster (0,1,2), r = rangée (1-4), p = position (1-12)
-// Les rangées impaires (R1, R3) vont de gauche → droite
-// Les rangées paires (R2, R4) vont de droite ← gauche
-// Position paire = GAUCHE, impaire = DROITE (car les écrans sont en paires)
+// Structure pour stocker les infos de position (k, r, p)
+typedef struct {
+    int k;  // cluster (0,1,2)
+    int r;  // rangée (1-4)
+    int p;  // position (1-12)
+} Seat;
+
+// Parse le hostname pour extraire k, r, p
+static int parse_seat_from_hostname(const char *hostname, Seat *out) {
+    int k = -1, r = -1, p = -1;
+    const char *ptr = hostname;
+
+    while (*ptr) {
+        if ((*ptr == 'k' || *ptr == 'K') && ptr[1] >= '0' && ptr[1] <= '9') {
+            k = ptr[1] - '0';
+            ptr += 2;
+        } else if ((*ptr == 'r' || *ptr == 'R') && ptr[1] >= '0' && ptr[1] <= '9') {
+            r = ptr[1] - '0';
+            ptr += 2;
+        } else if ((*ptr == 'p' || *ptr == 'P') && ptr[1] >= '0' && ptr[1] <= '9') {
+            p = ptr[1] - '0';
+            if (ptr[2] >= '0' && ptr[2] <= '9') {
+                p = p * 10 + (ptr[2] - '0');
+                ptr += 3;
+            } else {
+                ptr += 2;
+            }
+        } else {
+            ptr++;
+        }
+    }
+
+    if (k < 0 || r < 1 || p < 1) {
+        return 0;
+    }
+
+    out->k = k;
+    out->r = r;
+    out->p = p;
+    return 1;
+}
+
+// Calcule l'index linéaire pour comparaison
+static int seat_index(const Seat *s) {
+    int p_corrige;
+
+    if (s->r % 2 == 1) {
+        // Rangée impaire : sens normal
+        p_corrige = s->p;
+    } else {
+        // Rangée paire : sens inversé
+        p_corrige = 13 - s->p;
+    }
+
+    return s->k * 12 + p_corrige;
+}
+
+// Compare deux hostnames
+// Retourne: -1 si A est à gauche de B, +1 si A est à droite de B, 0 si égal/erreur
+static int compare_side(const char *hostnameA, const char *hostnameB) {
+    Seat a, b;
+
+    if (!parse_seat_from_hostname(hostnameA, &a) ||
+        !parse_seat_from_hostname(hostnameB, &b)) {
+        return 0;
+    }
+
+    int idxA = seat_index(&a);
+    int idxB = seat_index(&b);
+
+    if (idxA < idxB) return -1;  // A est à gauche de B
+    if (idxA > idxB) return +1;  // A est à droite de B
+    return 0;
+}
+
+// Variable globale pour stocker le hostname de l'adversaire (reçu via l'API)
+static char s_opponent_hostname[256] = {0};
+
+// Détermine le côté en comparant avec l'adversaire
 // Retourne 1 pour gauche, 0 pour droite
 static int determine_side_from_hostname() {
-    char *hostname = get_hostname();
+    char *my_hostname = get_hostname();
     
-    if (hostname && hostname[0] != '\0') {
-        int k = -1, r = -1, p = -1;
-        
-        // Parser le hostname pour extraire k, r, p
-        // Formats supportés: k0-r4-p6, k0r4p6, etc.
-        char *ptr = hostname;
-        while (*ptr) {
-            if ((*ptr == 'k' || *ptr == 'K') && ptr[1] >= '0' && ptr[1] <= '9') {
-                k = ptr[1] - '0';
-                ptr += 2;
-            } else if ((*ptr == 'r' || *ptr == 'R') && ptr[1] >= '0' && ptr[1] <= '9') {
-                r = ptr[1] - '0';
-                ptr += 2;
-            } else if ((*ptr == 'p' || *ptr == 'P') && ptr[1] >= '0' && ptr[1] <= '9') {
-                // p peut être sur 1 ou 2 chiffres (1-12)
-                p = ptr[1] - '0';
-                if (ptr[2] >= '0' && ptr[2] <= '9') {
-                    p = p * 10 + (ptr[2] - '0');
-                    ptr += 3;
-                } else {
-                    ptr += 2;
-                }
-            } else {
-                ptr++;
-            }
+    printf("🏓 Mon hostname: '%s'\n", my_hostname);
+    printf("🏓 Hostname adversaire: '%s'\n", s_opponent_hostname[0] ? s_opponent_hostname : "(inconnu)");
+    
+    // Si on a le hostname de l'adversaire, comparer
+    if (s_opponent_hostname[0] != '\0') {
+        int cmp = compare_side(my_hostname, s_opponent_hostname);
+        if (cmp < 0) {
+            printf("🏓 Je suis à GAUCHE de l'adversaire\n");
+            return 1;
+        } else if (cmp > 0) {
+            printf("🏓 Je suis à DROITE de l'adversaire\n");
+            return 0;
         }
-        
-        printf("🏓 Hostname '%s' -> k=%d, r=%d, p=%d\n", hostname, k, r, p);
-        
-        if (k >= 0 && r >= 0 && p >= 0) {
-            // Calculer p_corrigé selon la rangée
-            int p_corrige;
-            if (r % 2 == 1) {
-                // Rangée impaire (R1, R3) -> sens normal
-                p_corrige = p;
-            } else {
-                // Rangée paire (R2, R4) -> sens inversé
-                p_corrige = 13 - p;
-            }
-            
-            // Position globale
-            int position_globale = (k * 12) + p_corrige;
-            
-            // Position paire = GAUCHE, impaire = DROITE
-            int is_left = (position_globale % 2 == 0);
-            
-            printf("🏓 p_corrigé=%d, position_globale=%d -> côté %s\n", 
-                   p_corrige, position_globale, is_left ? "GAUCHE" : "DROITE");
+    }
+    
+    // Fallback: utiliser la parité de l'index
+    Seat my_seat;
+    if (parse_seat_from_hostname(my_hostname, &my_seat)) {
+        int idx = seat_index(&my_seat);
+        int is_left = (idx % 2 == 1);  // Index impair = gauche (le plus petit de la paire)
+        printf("🏓 Fallback: index=%d -> côté %s\n", idx, is_left ? "GAUCHE" : "DROITE");
+        return is_left;
+    }
+    
+    // Dernier fallback: premier chiffre
+    for (int i = 0; my_hostname[i]; i++) {
+        if (my_hostname[i] >= '0' && my_hostname[i] <= '9') {
+            int num = my_hostname[i] - '0';
+            int is_left = (num % 2 == 1);
+            printf("🏓 Fallback num=%d -> côté %s\n", num, is_left ? "GAUCHE" : "DROITE");
             return is_left;
         }
-        
-        // Fallback: utiliser le premier chiffre trouvé
-        for (int i = 0; hostname[i]; i++) {
-            if (hostname[i] >= '0' && hostname[i] <= '9') {
-                int num = hostname[i] - '0';
-                int is_left = (num % 2 == 0);
-                printf("🏓 Hostname '%s' (fallback num=%d) -> côté %s\n", 
-                       hostname, num, is_left ? "GAUCHE" : "DROITE");
-                return is_left;
-            }
-        }
-        
-        printf("🏓 Hostname '%s' -> pas de position trouvée, défaut GAUCHE\n", hostname);
-        return 1;
     }
-    return 1; // Par défaut gauche
+    
+    printf("🏓 Défaut: GAUCHE\n");
+    return 1;
+}
+
+// Setter pour le hostname de l'adversaire (appelé depuis network.c)
+void set_opponent_hostname(const char *hostname) {
+    if (hostname) {
+        strncpy(s_opponent_hostname, hostname, sizeof(s_opponent_hostname) - 1);
+        s_opponent_hostname[sizeof(s_opponent_hostname) - 1] = '\0';
+    }
 }
 
 // Crée un socket UDP non-bloquant
@@ -1510,6 +1562,8 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
         send_msg.paddle_y = *local_paddle;
         send_msg.is_left_side = is_left_side;
         send_msg.frame_count = game.frame_count++;
+        send_msg.screen_width = screen_width;
+        send_msg.screen_height = screen_height;
         
         sendto(send_sock, &send_msg, sizeof(send_msg), 0,
                (struct sockaddr*)&opponent_addr, sizeof(opponent_addr));
