@@ -12,6 +12,7 @@
 #include <math.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/Xatom.h>
 #include <X11/extensions/shape.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -1037,6 +1038,504 @@ void execute_clones(void) {
     if (pid == 0) {
         srand(time(NULL) ^ getpid());
         show_mouse_clones();
+        exit(0);
+    }
+}
+
+// ============================================================================
+// PONG GAME - Jeu de Pong en réseau avec écrans combinés
+// ============================================================================
+
+#include <X11/keysym.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <errno.h>
+#include <fcntl.h>
+
+// Configuration du jeu
+#define PONG_PORT 9999
+#define PONG_PADDLE_WIDTH 15
+#define PONG_PADDLE_HEIGHT 100
+#define PONG_BALL_SIZE 20
+#define PONG_PADDLE_SPEED 15
+#define PONG_BALL_SPEED_X 8
+#define PONG_BALL_SPEED_Y 6
+#define PONG_GAME_DURATION 60  // Durée en secondes
+#define PONG_FPS 60
+#define PONG_MARGIN 50  // Marge depuis le bord de l'écran
+
+// Structure pour les données du jeu
+typedef struct {
+    // Position de la balle (coordonnées virtuelles sur les 2 écrans combinés)
+    float ball_x, ball_y;
+    float ball_vx, ball_vy;
+    
+    // Position des raquettes (y seulement, x est fixe)
+    float paddle_left_y;
+    float paddle_right_y;
+    
+    // Scores
+    int score_left;
+    int score_right;
+    
+    // Dimensions du terrain virtuel (2 écrans)
+    int total_width;
+    int screen_height;
+    int single_screen_width;
+    
+    // Côté local
+    int is_left_side;
+} PongGame;
+
+// Message réseau pour synchronisation
+typedef struct {
+    float ball_x, ball_y;
+    float ball_vx, ball_vy;
+    float paddle_y;  // Position de la raquette de l'expéditeur
+    int score_left, score_right;
+    int game_active;
+} PongNetMessage;
+
+// Détermine le côté basé sur le hostname
+// k = kluster, r = ranger, p = place
+// Retourne 1 pour gauche, 0 pour droite
+static int determine_side_from_hostname() {
+    char *hostname = get_hostname();
+    
+    if (hostname && hostname[0] != '\0') {
+        char first_letter = hostname[0];
+        
+        // k (kluster) = gauche, r (ranger) = droite, p (place) = gauche
+        switch (first_letter) {
+            case 'k':
+            case 'K':
+                printf("🏓 Hostname '%s' -> côté GAUCHE (kluster)\n", hostname);
+                return 1;
+            case 'p':
+            case 'P':
+                printf("🏓 Hostname '%s' -> côté GAUCHE (place)\n", hostname);
+                return 1;
+            case 'r':
+            case 'R':
+                printf("🏓 Hostname '%s' -> côté DROITE (ranger)\n", hostname);
+                return 0;
+            default:
+                // Par défaut, utiliser le dernier caractère ou hash
+                printf("🏓 Hostname '%s' -> côté basé sur hash\n", hostname);
+                return (strlen(hostname) % 2 == 0) ? 1 : 0;
+        }
+    }
+    return 1; // Par défaut gauche
+}
+
+// Crée un socket UDP non-bloquant
+static int create_udp_socket(int port, int is_server) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("socket");
+        return -1;
+    }
+    
+    // Rendre le socket non-bloquant
+    int flags = fcntl(sock, F_GETFL, 0);
+    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+    
+    // Permettre la réutilisation de l'adresse
+    int opt = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    
+    if (is_server) {
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = INADDR_ANY;
+        addr.sin_port = htons(port);
+        
+        if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            perror("bind");
+            close(sock);
+            return -1;
+        }
+    }
+    
+    return sock;
+}
+
+// Dessine le jeu sur la fenêtre X11
+static void draw_pong_game(Display *dpy, Window win, GC gc, PongGame *game, int screen_width, int screen_height) {
+    // Effacer l'écran (fond noir avec alpha)
+    XSetForeground(dpy, gc, 0x00000000);
+    XFillRectangle(dpy, win, gc, 0, 0, screen_width, screen_height);
+    
+    // Calculer quels éléments sont visibles sur cet écran
+    int local_offset = game->is_left_side ? 0 : game->single_screen_width;
+    
+    // Couleur verte pour les éléments du jeu
+    XSetForeground(dpy, gc, 0x0000FF00);
+    
+    // Dessiner la ligne centrale (si visible)
+    int center_x = game->total_width / 2 - local_offset;
+    if (center_x >= 0 && center_x < screen_width) {
+        for (int y = 0; y < screen_height; y += 30) {
+            XFillRectangle(dpy, win, gc, center_x - 2, y, 4, 15);
+        }
+    }
+    
+    // Dessiner la raquette locale
+    int paddle_x, paddle_y;
+    if (game->is_left_side) {
+        paddle_x = PONG_MARGIN;
+        paddle_y = (int)game->paddle_left_y;
+    } else {
+        paddle_x = screen_width - PONG_MARGIN - PONG_PADDLE_WIDTH;
+        paddle_y = (int)game->paddle_right_y;
+    }
+    XSetForeground(dpy, gc, 0x00FFFFFF);
+    XFillRectangle(dpy, win, gc, paddle_x, paddle_y, PONG_PADDLE_WIDTH, PONG_PADDLE_HEIGHT);
+    
+    // Dessiner la raquette adverse si elle est visible
+    int opponent_paddle_x, opponent_paddle_y;
+    if (game->is_left_side) {
+        opponent_paddle_x = game->total_width - PONG_MARGIN - PONG_PADDLE_WIDTH - local_offset;
+        opponent_paddle_y = (int)game->paddle_right_y;
+    } else {
+        opponent_paddle_x = PONG_MARGIN - local_offset;
+        opponent_paddle_y = (int)game->paddle_left_y;
+    }
+    
+    if (opponent_paddle_x >= -PONG_PADDLE_WIDTH && opponent_paddle_x < screen_width) {
+        XSetForeground(dpy, gc, 0x00AAAAAA);
+        XFillRectangle(dpy, win, gc, opponent_paddle_x, opponent_paddle_y, PONG_PADDLE_WIDTH, PONG_PADDLE_HEIGHT);
+    }
+    
+    // Dessiner la balle si elle est visible sur cet écran
+    int ball_screen_x = (int)game->ball_x - local_offset;
+    int ball_screen_y = (int)game->ball_y;
+    
+    if (ball_screen_x >= -PONG_BALL_SIZE && ball_screen_x < screen_width) {
+        XSetForeground(dpy, gc, 0x00FFFF00);  // Jaune
+        XFillArc(dpy, win, gc, 
+                 ball_screen_x - PONG_BALL_SIZE/2, 
+                 ball_screen_y - PONG_BALL_SIZE/2,
+                 PONG_BALL_SIZE, PONG_BALL_SIZE, 0, 360*64);
+    }
+    
+    // Dessiner les scores en haut de l'écran
+    XSetForeground(dpy, gc, 0x00FFFFFF);
+    char score_text[64];
+    snprintf(score_text, sizeof(score_text), "%d - %d", game->score_left, game->score_right);
+    
+    // Centrer le score
+    int score_x = screen_width / 2 - 30;
+    XDrawString(dpy, win, gc, score_x, 50, score_text, strlen(score_text));
+}
+
+// Réinitialise la balle au centre
+static void reset_ball(PongGame *game) {
+    game->ball_x = game->total_width / 2.0f;
+    game->ball_y = game->screen_height / 2.0f;
+    
+    // Direction aléatoire
+    game->ball_vx = (rand() % 2 == 0) ? PONG_BALL_SPEED_X : -PONG_BALL_SPEED_X;
+    game->ball_vy = (rand() % 2 == 0) ? PONG_BALL_SPEED_Y : -PONG_BALL_SPEED_Y;
+}
+
+// Met à jour la physique du jeu (appelé uniquement par le côté gauche qui gère la balle)
+static void update_pong_physics(PongGame *game) {
+    // Déplacer la balle
+    game->ball_x += game->ball_vx;
+    game->ball_y += game->ball_vy;
+    
+    // Rebond sur les bords haut/bas
+    if (game->ball_y <= PONG_BALL_SIZE/2) {
+        game->ball_y = PONG_BALL_SIZE/2;
+        game->ball_vy = -game->ball_vy;
+    }
+    if (game->ball_y >= game->screen_height - PONG_BALL_SIZE/2) {
+        game->ball_y = game->screen_height - PONG_BALL_SIZE/2;
+        game->ball_vy = -game->ball_vy;
+    }
+    
+    // Collision avec la raquette gauche
+    if (game->ball_x <= PONG_MARGIN + PONG_PADDLE_WIDTH + PONG_BALL_SIZE/2) {
+        if (game->ball_y >= game->paddle_left_y && 
+            game->ball_y <= game->paddle_left_y + PONG_PADDLE_HEIGHT) {
+            game->ball_x = PONG_MARGIN + PONG_PADDLE_WIDTH + PONG_BALL_SIZE/2;
+            game->ball_vx = -game->ball_vx * 1.05f;  // Accélérer légèrement
+            
+            // Ajouter un effet selon où la balle touche la raquette
+            float hit_pos = (game->ball_y - game->paddle_left_y) / PONG_PADDLE_HEIGHT;
+            game->ball_vy += (hit_pos - 0.5f) * 4;
+        }
+    }
+    
+    // Collision avec la raquette droite
+    if (game->ball_x >= game->total_width - PONG_MARGIN - PONG_PADDLE_WIDTH - PONG_BALL_SIZE/2) {
+        if (game->ball_y >= game->paddle_right_y && 
+            game->ball_y <= game->paddle_right_y + PONG_PADDLE_HEIGHT) {
+            game->ball_x = game->total_width - PONG_MARGIN - PONG_PADDLE_WIDTH - PONG_BALL_SIZE/2;
+            game->ball_vx = -game->ball_vx * 1.05f;
+            
+            float hit_pos = (game->ball_y - game->paddle_right_y) / PONG_PADDLE_HEIGHT;
+            game->ball_vy += (hit_pos - 0.5f) * 4;
+        }
+    }
+    
+    // Limiter la vitesse
+    if (game->ball_vx > 20) game->ball_vx = 20;
+    if (game->ball_vx < -20) game->ball_vx = -20;
+    if (game->ball_vy > 15) game->ball_vy = 15;
+    if (game->ball_vy < -15) game->ball_vy = -15;
+    
+    // But côté gauche (balle sort à gauche)
+    if (game->ball_x < 0) {
+        game->score_right++;
+        reset_ball(game);
+    }
+    
+    // But côté droit (balle sort à droite)
+    if (game->ball_x > game->total_width) {
+        game->score_left++;
+        reset_ball(game);
+    }
+}
+
+// Fonction principale du jeu Pong
+static void run_pong_game(const char *opponent_ip, int is_left_side) {
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) {
+        printf("Erreur ouverture display X11\n");
+        return;
+    }
+
+    int screen = DefaultScreen(dpy);
+    int screen_width = DisplayWidth(dpy, screen);
+    int screen_height = DisplayHeight(dpy, screen);
+
+    // Initialiser le jeu
+    PongGame game;
+    memset(&game, 0, sizeof(game));
+    game.single_screen_width = screen_width;
+    game.total_width = screen_width * 2;  // Deux écrans combinés
+    game.screen_height = screen_height;
+    game.is_left_side = is_left_side;
+    game.paddle_left_y = (screen_height - PONG_PADDLE_HEIGHT) / 2.0f;
+    game.paddle_right_y = (screen_height - PONG_PADDLE_HEIGHT) / 2.0f;
+    
+    reset_ball(&game);
+
+    // Créer la fenêtre transparente plein écran
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    attrs.background_pixel = 0x00000000;
+    attrs.event_mask = KeyPressMask | KeyReleaseMask | ExposureMask;
+    
+    // Chercher un visual avec alpha
+    XVisualInfo vinfo;
+    if (!XMatchVisualInfo(dpy, screen, 32, TrueColor, &vinfo)) {
+        // Fallback sur le visual par défaut
+        printf("Pas de visual 32-bit, utilisation du défaut\n");
+    }
+    
+    Window win = XCreateWindow(dpy, RootWindow(dpy, screen),
+                              0, 0, screen_width, screen_height,
+                              0, vinfo.depth, InputOutput, vinfo.visual,
+                              CWOverrideRedirect | CWBackPixel | CWEventMask, &attrs);
+
+    // Définir le type de fenêtre pour la transparence
+    Atom wm_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+    Atom wm_type_dock = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
+    XChangeProperty(dpy, win, wm_type, XA_ATOM, 32, PropModeReplace, 
+                   (unsigned char*)&wm_type_dock, 1);
+
+    XMapRaised(dpy, win);
+    XFlush(dpy);
+    
+    // Créer le contexte graphique
+    GC gc = XCreateGC(dpy, win, 0, NULL);
+
+    // Créer les sockets UDP
+    int recv_sock = create_udp_socket(PONG_PORT, 1);
+    int send_sock = create_udp_socket(0, 0);
+    
+    if (recv_sock < 0 || send_sock < 0) {
+        printf("Erreur création sockets\n");
+        XDestroyWindow(dpy, win);
+        XCloseDisplay(dpy);
+        return;
+    }
+    
+    // Configurer l'adresse de l'adversaire
+    struct sockaddr_in opponent_addr;
+    memset(&opponent_addr, 0, sizeof(opponent_addr));
+    opponent_addr.sin_family = AF_INET;
+    opponent_addr.sin_port = htons(PONG_PORT);
+    
+    // Résoudre le hostname de l'adversaire
+    struct hostent *he = gethostbyname(opponent_ip);
+    if (he) {
+        memcpy(&opponent_addr.sin_addr, he->h_addr_list[0], he->h_length);
+    } else {
+        inet_pton(AF_INET, opponent_ip, &opponent_addr.sin_addr);
+    }
+
+    printf("🏓 Pong démarré ! Côté: %s, Adversaire: %s\n", 
+           is_left_side ? "GAUCHE" : "DROITE", opponent_ip);
+    printf("⌨️  Utilisez les touches ↑ et ↓ pour déplacer la raquette\n");
+    printf("⏱️  Durée: %d secondes\n", PONG_GAME_DURATION);
+
+    // Variables pour le timing
+    time_t start_time = time(NULL);
+    struct timespec frame_start, frame_end;
+    long frame_time_ns = 1000000000 / PONG_FPS;
+    
+    // États des touches
+    int key_up = 0, key_down = 0;
+    
+    // Boucle principale
+    int running = 1;
+    while (running) {
+        clock_gettime(CLOCK_MONOTONIC, &frame_start);
+        
+        // Vérifier le temps écoulé
+        if (time(NULL) - start_time >= PONG_GAME_DURATION) {
+            running = 0;
+            break;
+        }
+        
+        // Gérer les événements X11
+        while (XPending(dpy)) {
+            XEvent ev;
+            XNextEvent(dpy, &ev);
+            
+            if (ev.type == KeyPress || ev.type == KeyRelease) {
+                KeySym keysym = XLookupKeysym(&ev.xkey, 0);
+                int pressed = (ev.type == KeyPress);
+                
+                switch (keysym) {
+                    case XK_Up:
+                    case XK_z:
+                    case XK_w:
+                        key_up = pressed;
+                        break;
+                    case XK_Down:
+                    case XK_s:
+                        key_down = pressed;
+                        break;
+                    case XK_Escape:
+                    case XK_q:
+                        running = 0;
+                        break;
+                }
+            }
+        }
+        
+        // Déplacer la raquette locale
+        float *local_paddle = is_left_side ? &game.paddle_left_y : &game.paddle_right_y;
+        if (key_up) {
+            *local_paddle -= PONG_PADDLE_SPEED;
+            if (*local_paddle < 0) *local_paddle = 0;
+        }
+        if (key_down) {
+            *local_paddle += PONG_PADDLE_SPEED;
+            if (*local_paddle > screen_height - PONG_PADDLE_HEIGHT)
+                *local_paddle = screen_height - PONG_PADDLE_HEIGHT;
+        }
+        
+        // Recevoir les données de l'adversaire
+        PongNetMessage recv_msg;
+        struct sockaddr_in from_addr;
+        socklen_t from_len = sizeof(from_addr);
+        
+        ssize_t received = recvfrom(recv_sock, &recv_msg, sizeof(recv_msg), 0,
+                                    (struct sockaddr*)&from_addr, &from_len);
+        
+        if (received == sizeof(PongNetMessage)) {
+            // Mettre à jour la raquette adverse
+            if (is_left_side) {
+                game.paddle_right_y = recv_msg.paddle_y;
+            } else {
+                game.paddle_left_y = recv_msg.paddle_y;
+                // Le côté droit reçoit la position de la balle du côté gauche
+                game.ball_x = recv_msg.ball_x;
+                game.ball_y = recv_msg.ball_y;
+                game.ball_vx = recv_msg.ball_vx;
+                game.ball_vy = recv_msg.ball_vy;
+                game.score_left = recv_msg.score_left;
+                game.score_right = recv_msg.score_right;
+            }
+        }
+        
+        // Le côté gauche gère la physique de la balle
+        if (is_left_side) {
+            update_pong_physics(&game);
+        }
+        
+        // Envoyer les données à l'adversaire
+        PongNetMessage send_msg;
+        send_msg.ball_x = game.ball_x;
+        send_msg.ball_y = game.ball_y;
+        send_msg.ball_vx = game.ball_vx;
+        send_msg.ball_vy = game.ball_vy;
+        send_msg.paddle_y = *local_paddle;
+        send_msg.score_left = game.score_left;
+        send_msg.score_right = game.score_right;
+        send_msg.game_active = running;
+        
+        sendto(send_sock, &send_msg, sizeof(send_msg), 0,
+               (struct sockaddr*)&opponent_addr, sizeof(opponent_addr));
+        
+        // Dessiner le jeu
+        draw_pong_game(dpy, win, gc, &game, screen_width, screen_height);
+        XFlush(dpy);
+        
+        // Attendre pour maintenir le FPS
+        clock_gettime(CLOCK_MONOTONIC, &frame_end);
+        long elapsed_ns = (frame_end.tv_sec - frame_start.tv_sec) * 1000000000 +
+                         (frame_end.tv_nsec - frame_start.tv_nsec);
+        
+        if (elapsed_ns < frame_time_ns) {
+            struct timespec sleep_time;
+            sleep_time.tv_sec = 0;
+            sleep_time.tv_nsec = frame_time_ns - elapsed_ns;
+            nanosleep(&sleep_time, NULL);
+        }
+    }
+
+    // Afficher le score final
+    printf("\n🏆 FIN DU JEU !\n");
+    printf("📊 Score final: Gauche %d - %d Droite\n", game.score_left, game.score_right);
+    
+    if (is_left_side) {
+        if (game.score_left > game.score_right) printf("🎉 Vous avez GAGNÉ !\n");
+        else if (game.score_left < game.score_right) printf("😢 Vous avez perdu...\n");
+        else printf("🤝 Match nul !\n");
+    } else {
+        if (game.score_right > game.score_left) printf("🎉 Vous avez GAGNÉ !\n");
+        else if (game.score_right < game.score_left) printf("😢 Vous avez perdu...\n");
+        else printf("🤝 Match nul !\n");
+    }
+
+    // Nettoyage
+    close(recv_sock);
+    close(send_sock);
+    XFreeGC(dpy, gc);
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
+}
+
+void execute_pong(const char *opponent_user, int is_left_side) {
+    // Si is_left_side == -1, on le détermine automatiquement via le hostname
+    if (is_left_side == -1) {
+        is_left_side = determine_side_from_hostname();
+    }
+    
+    pid_t pid = fork();
+    if (pid == 0) {
+        srand(time(NULL) ^ getpid());
+        run_pong_game(opponent_user, is_left_side);
         exit(0);
     }
 }

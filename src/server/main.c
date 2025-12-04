@@ -831,6 +831,45 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 mg_http_reply(c, 400, s_cors_headers, "Missing 'id' parameter\n");
             }
         }
+        // API pour le jeu Pong en réseau
+        else if (mg_match(hm->uri, mg_str("/api/pong"), NULL)) {
+            if (!validate_bearer_token(hm)) {
+                mg_http_reply(c, 401, s_cors_headers, "Unauthorized: Invalid or missing token\n");
+                return;
+            }
+            
+            char target_id[32];
+            char from_user[64];
+            get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+            get_qs_var(&hm->query, "from", from_user, sizeof(from_user));
+
+            if (strlen(target_id) > 0 && strlen(from_user) > 0) {
+                if (check_rate_limit(hm, target_id)) {
+                    mg_http_reply(c, 429, s_cors_headers, "Too Many Requests for this target\n");
+                    return;
+                }
+
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "command", "pong");
+                cJSON_AddStringToObject(json, "from", from_user);
+                char *json_str = cJSON_PrintUnformatted(json);
+
+                int found = 0;
+                printf("🏓 Envoi invitation Pong de '%s' vers '%s'...\n", from_user, target_id);
+                for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
+                    if (t->is_websocket && match_target(t->data, target_id)) {
+                        mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
+                        found++;
+                    }
+                }
+
+                free(json_str);
+                cJSON_Delete(json);
+                mg_http_reply(c, 200, s_cors_headers, "Pong invitation sent to %d client(s)\n", found);
+            } else {
+                mg_http_reply(c, 400, s_cors_headers, "Missing 'id' or 'from' parameter\n");
+            }
+        }
         // 2. API pour uploader une image
         else if (mg_match(hm->uri, mg_str("/api/upload"), NULL)) {
             if (!validate_bearer_token(hm)) {
