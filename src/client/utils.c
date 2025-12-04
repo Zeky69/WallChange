@@ -1326,25 +1326,20 @@ static void run_pong_game(const char *opponent_ip, int is_left_side) {
     
     reset_ball(&game);
 
-    // Créer la fenêtre transparente plein écran
+    // Créer la fenêtre plein écran (sans transparence pour compatibilité)
     XSetWindowAttributes attrs;
     attrs.override_redirect = True;
-    attrs.background_pixel = 0x00000000;
+    attrs.background_pixel = BlackPixel(dpy, screen);
     attrs.event_mask = KeyPressMask | KeyReleaseMask | ExposureMask;
-    
-    // Chercher un visual avec alpha
-    XVisualInfo vinfo;
-    if (!XMatchVisualInfo(dpy, screen, 32, TrueColor, &vinfo)) {
-        // Fallback sur le visual par défaut
-        printf("Pas de visual 32-bit, utilisation du défaut\n");
-    }
+    attrs.colormap = DefaultColormap(dpy, screen);
     
     Window win = XCreateWindow(dpy, RootWindow(dpy, screen),
                               0, 0, screen_width, screen_height,
-                              0, vinfo.depth, InputOutput, vinfo.visual,
-                              CWOverrideRedirect | CWBackPixel | CWEventMask, &attrs);
+                              0, DefaultDepth(dpy, screen), InputOutput, 
+                              DefaultVisual(dpy, screen),
+                              CWOverrideRedirect | CWBackPixel | CWEventMask | CWColormap, &attrs);
 
-    // Définir le type de fenêtre pour la transparence
+    // Définir le type de fenêtre
     Atom wm_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
     Atom wm_type_dock = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
     XChangeProperty(dpy, win, wm_type, XA_ATOM, 32, PropModeReplace, 
