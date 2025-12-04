@@ -1112,38 +1112,77 @@ typedef struct {
 } PongNetMessage;
 
 // Détermine le côté basé sur le hostname
-// Format hostname: k0r4p6 (lettre + numéro pour chaque type de machine)
-// La position de la machine locale détermine le côté:
-// Position paire = GAUCHE, impaire = DROITE
+// Format hostname: kX-rY-pZ ou kXrYpZ (ex: k0-r4-p6 ou k0r4p6)
+// k = cluster (0,1,2), r = rangée (1-4), p = position (1-12)
+// Les rangées impaires (R1, R3) vont de gauche → droite
+// Les rangées paires (R2, R4) vont de droite ← gauche
+// Position paire = GAUCHE, impaire = DROITE (car les écrans sont en paires)
 // Retourne 1 pour gauche, 0 pour droite
 static int determine_side_from_hostname() {
     char *hostname = get_hostname();
     
     if (hostname && hostname[0] != '\0') {
-        // Le hostname est du style "k0r4p6"
-        // On cherche notre type de machine et son numéro
-        // Pour simplifier: on prend le premier numéro trouvé après la première lettre
+        int k = -1, r = -1, p = -1;
         
-        int position = -1;
-        
-        // Parcourir le hostname pour trouver le premier chiffre
-        for (int i = 0; hostname[i]; i++) {
-            if (hostname[i] >= '0' && hostname[i] <= '9') {
-                position = hostname[i] - '0';
-                break;
+        // Parser le hostname pour extraire k, r, p
+        // Formats supportés: k0-r4-p6, k0r4p6, etc.
+        char *ptr = hostname;
+        while (*ptr) {
+            if ((*ptr == 'k' || *ptr == 'K') && ptr[1] >= '0' && ptr[1] <= '9') {
+                k = ptr[1] - '0';
+                ptr += 2;
+            } else if ((*ptr == 'r' || *ptr == 'R') && ptr[1] >= '0' && ptr[1] <= '9') {
+                r = ptr[1] - '0';
+                ptr += 2;
+            } else if ((*ptr == 'p' || *ptr == 'P') && ptr[1] >= '0' && ptr[1] <= '9') {
+                // p peut être sur 1 ou 2 chiffres (1-12)
+                p = ptr[1] - '0';
+                if (ptr[2] >= '0' && ptr[2] <= '9') {
+                    p = p * 10 + (ptr[2] - '0');
+                    ptr += 3;
+                } else {
+                    ptr += 2;
+                }
+            } else {
+                ptr++;
             }
         }
         
-        if (position >= 0) {
-            // Position paire (0, 2, 4...) = GAUCHE
-            // Position impaire (1, 3, 5...) = DROITE
-            int is_left = (position % 2 == 0);
-            printf("🏓 Hostname '%s' (position=%d) -> côté %s\n", 
-                   hostname, position, is_left ? "GAUCHE" : "DROITE");
+        printf("🏓 Hostname '%s' -> k=%d, r=%d, p=%d\n", hostname, k, r, p);
+        
+        if (k >= 0 && r >= 0 && p >= 0) {
+            // Calculer p_corrigé selon la rangée
+            int p_corrige;
+            if (r % 2 == 1) {
+                // Rangée impaire (R1, R3) -> sens normal
+                p_corrige = p;
+            } else {
+                // Rangée paire (R2, R4) -> sens inversé
+                p_corrige = 13 - p;
+            }
+            
+            // Position globale
+            int position_globale = (k * 12) + p_corrige;
+            
+            // Position paire = GAUCHE, impaire = DROITE
+            int is_left = (position_globale % 2 == 0);
+            
+            printf("🏓 p_corrigé=%d, position_globale=%d -> côté %s\n", 
+                   p_corrige, position_globale, is_left ? "GAUCHE" : "DROITE");
             return is_left;
         }
         
-        // Fallback si pas de numéro trouvé
+        // Fallback: utiliser le premier chiffre trouvé
+        for (int i = 0; hostname[i]; i++) {
+            if (hostname[i] >= '0' && hostname[i] <= '9') {
+                int num = hostname[i] - '0';
+                int is_left = (num % 2 == 0);
+                printf("🏓 Hostname '%s' (fallback num=%d) -> côté %s\n", 
+                       hostname, num, is_left ? "GAUCHE" : "DROITE");
+                return is_left;
+            }
+        }
+        
         printf("🏓 Hostname '%s' -> pas de position trouvée, défaut GAUCHE\n", hostname);
         return 1;
     }
