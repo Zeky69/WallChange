@@ -78,10 +78,12 @@ Liste tous les clients connectés.
 [
   {
     "id": "zekynux",
+    "hostname": "pc-zekynux",
     "version": "1.0.41"
   },
   {
     "id": "alice",
+    "hostname": "workstation-01",
     "version": "1.0.40"
   }
 ]
@@ -129,7 +131,7 @@ Upload une image locale et l'envoie optionnellement à un client.
 | Param | Type | Description |
 |-------|------|-------------|
 | `id` | string | (Optionnel) ID du client cible (ou `*` pour tous - admin) |
-| `type` | string | (Optionnel) Type d'action : `wallpaper` (défaut) ou `marquee` |
+| `type` | string | (Optionnel) Type d'action : `wallpaper` (défaut), `marquee` ou `particles` |
 
 **Body :** `multipart/form-data` avec le fichier image
 
@@ -159,6 +161,11 @@ curl -H "Authorization: Bearer $TOKEN" \
 curl -H "Authorization: Bearer $TOKEN" \
   -F "file=@./mon-gif.gif" \
   "http://localhost:8000/api/upload?id=zakburak&type=marquee"
+
+# Envoyer une image pour l'effet particules
+curl -H "Authorization: Bearer $TOKEN" \
+  -F "file=@./particle.png" \
+  "http://localhost:8000/api/upload?id=zakburak&type=particles"
 
 # Envoyer à tous les clients (admin)
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
@@ -341,11 +348,54 @@ curl -H "Authorization: Bearer $ADMIN_TOKEN" \
 
 ---
 
+### `GET /api/particles`
+
+Affiche des particules autour du curseur de la souris pendant 5 secondes. L'image fournie est utilisée comme texture de particule (redimensionnée à 48x48 pixels).
+
+**Auth requise :** Oui (User ou Admin)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous - admin uniquement) |
+| `url` | string | URL de l'image de la particule |
+
+**Réponse (200) :**
+```
+Particles sent to 1 client(s)
+```
+
+**Exemples curl :**
+
+```bash
+# Envoyer des particules à un utilisateur
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/particles?id=zakburak&url=https://example.com/star.png"
+
+# Envoyer à tous les clients (admin)
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8000/api/particles?id=*&url=https://example.com/heart.png"
+
+# Envoyer une image locale comme particule
+curl -H "Authorization: Bearer $TOKEN" \
+  -F "file=@./star.png" \
+  "http://localhost:8000/api/upload?id=zakburak&type=particles"
+```
+
+**Notes :**
+- L'effet dure exactement 5 secondes
+- Les particules suivent le curseur et sont émises avec une physique réaliste (gravité, vélocité)
+- Supporte la transparence PNG (via XShape)
+- Les images sont automatiquement redimensionnées à 48x48 pixels
+- Pour envoyer un fichier local, utiliser `/api/upload` avec `type=particles`
+
+---
+
 ## 🌟 Wildcard (Admin)
 
 L'admin peut utiliser `*` comme `id` pour envoyer une commande à **tous les clients connectés**.
 
-**Endpoints supportés :** `send`, `update`, `showdesktop`, `reverse`, `key`, `marquee`
+**Endpoints supportés :** `send`, `upload`, `update`, `showdesktop`, `reverse`, `key`, `marquee`, `particles`
 
 **Exemples :**
 
@@ -365,6 +415,10 @@ curl -H "Authorization: Bearer $ADMIN_TOKEN" \
 # Envoyer un raccourci clavier à tous
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   "http://localhost:8000/api/key?id=*&combo=super+d"
+
+# Effet particules sur tous les clients
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8000/api/particles?id=*&url=https://example.com/star.png"
 ```
 
 **Note :** Le wildcard `*` nécessite le token **admin**, pas un simple token utilisateur.
@@ -399,6 +453,7 @@ Les clients se connectent via WebSocket à `ws://server:port/{username}`.
 {"command": "showdesktop"}
 {"command": "reverse"}
 {"command": "marquee", "url": "https://example.com/image.png"}
+{"command": "particles", "url": "https://example.com/particle.png"}
 {"command": "key", "combo": "ctrl+alt+t"}
 ```
 
@@ -408,6 +463,7 @@ Les clients se connectent via WebSocket à `ws://server:port/{username}`.
 ```json
 {
   "type": "info",
+  "hostname": "pc-zekynux",
   "os": "Ubuntu 24.04.3 LTS",
   "uptime": "3h 27m",
   "cpu": "1.51, 1.49, 1.41",
