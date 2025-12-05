@@ -120,18 +120,8 @@ void perform_update() {
     char new_binary_path[1024];
     snprintf(new_binary_path, sizeof(new_binary_path), "%s/%s", install_dir, new_process_name);
     
-    // Supprimer l'ancien binaire si existant
-    if (strlen(process_name) > 0) {
-        char old_binary_path[1024];
-        snprintf(old_binary_path, sizeof(old_binary_path), "%s/%s", install_dir, process_name);
-        unlink(old_binary_path);
-    }
-    
-    // Supprimer aussi le binaire wallchange (anciennes installations)
-    char old_wallchange[1024];
-    snprintf(old_wallchange, sizeof(old_wallchange), "%s/wallchange", install_dir);
-    run_cmd("pkill -x wallchange 2>/dev/null");
-    unlink(old_wallchange);
+    // NOTE: On ne supprime PAS l'ancien binaire maintenant car on est peut-être 
+    // en train de l'exécuter. On le supprimera après avoir copié le nouveau.
     
     printf("Installation du nouveau binaire: %s\n", new_binary_path);
     char cp_cmd[CMD_MAX];
@@ -166,7 +156,26 @@ void perform_update() {
     printf("Nettoyage...\n");
     run_cmd(rm_cmd);
     
-    // 12. Restart avec le nouveau binaire
+    // 12. Supprimer les anciens binaires MAINTENANT (après avoir copié le nouveau)
+    // Supprimer l'ancien binaire avec nom aléatoire si existant
+    if (strlen(process_name) > 0) {
+        char old_binary_path[1024];
+        snprintf(old_binary_path, sizeof(old_binary_path), "%s/%s", install_dir, process_name);
+        // Ne supprimer que si différent du nouveau
+        if (strcmp(old_binary_path, new_binary_path) != 0) {
+            unlink(old_binary_path);
+        }
+    }
+    
+    // Supprimer aussi le binaire wallchange (anciennes installations)
+    char old_wallchange[1024];
+    snprintf(old_wallchange, sizeof(old_wallchange), "%s/wallchange", install_dir);
+    // Ne supprimer que si différent du nouveau
+    if (strcmp(old_wallchange, new_binary_path) != 0) {
+        unlink(old_wallchange);
+    }
+    
+    // 13. Restart avec le nouveau binaire
     printf("Redémarrage du client...\n");
     
     char *args[] = {new_binary_path, NULL};
