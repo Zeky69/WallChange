@@ -1,16 +1,16 @@
 CC = gcc
 VERSION := $(shell cat VERSION)
-CFLAGS = -O2 -DMG_TLS=2 -Iinclude -Isrc/common -DVERSION=\"$(VERSION)\"
+CFLAGS = -O2 -DMG_TLS=2 -Iinclude -Isrc/common -Isrc/server -DVERSION=\"$(VERSION)\"
 LDFLAGS = -lssl -lcrypto
 LDFLAGS_CLIENT = $(LDFLAGS) -lX11 -lXext -lXfixes -lXtst -lm
-LDFLAGS_SERVER = $(LDFLAGS) -lpthread -lm
+LDFLAGS_SERVER = $(LDFLAGS)
 
 TARGET_CLIENT = wallchange
 TARGET_SERVER = server
 
 SRC_COMMON = src/common/mongoose.c src/common/cJSON.c
 SRC_CLIENT = src/client/main.c src/client/utils.c src/client/wallpaper.c src/client/updater.c src/client/network.c src/client/keyboard.c $(SRC_COMMON)
-SRC_SERVER = src/server/main.c $(SRC_COMMON)
+SRC_SERVER = src/server/main.c src/server/auth.c src/server/clients.c src/server/api.c $(SRC_COMMON)
 
 all: $(TARGET_CLIENT)
 
