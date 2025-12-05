@@ -11,8 +11,6 @@ void execute_reverse_screen();
 void execute_marquee(const char *url);
 void execute_particles(const char *url);
 void execute_clones(void);
-void execute_pong(const char *opponent_user, int is_left_side);
-void set_opponent_hostname(const char *hostname);
 
 #endif
 

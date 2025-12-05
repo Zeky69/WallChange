@@ -28,8 +28,7 @@ static void print_help(const char *prog_name) {
     printf("    \033[1;32mreverse\033[0m <user>                 Inverser l'écran pendant 3s\n");
     printf("    \033[1;32mmarquee\033[0m <user> <url>           Faire défiler une image\n");
     printf("    \033[1;32mparticles\033[0m <user> <url>         Particules autour de la souris (5s)\n");
-    printf("    \033[1;32mclones\033[0m <user>                  100 clones de souris (5s)\n");
-    printf("    \033[1;32mpong\033[0m <user>                    🏓 Jouer à Pong sur 2 écrans\n\n");
+    printf("    \033[1;32mclones\033[0m <user>                  100 clones de souris (5s)\n\n");
     printf("  \033[1;36mOPTIONS:\033[0m\n");
     printf("    \033[1;33m-l, --local\033[0m                    Mode local (localhost:8000)\n");
     printf("    \033[1;33m-h, --help\033[0m                     Afficher cette aide\n");
@@ -142,10 +141,6 @@ int main(int argc, char **argv) {
     // Mode commande : clones
     if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "clones") == 0) {
         return send_clones_command(argv[cmd_idx + 1]);
-    }
-    // Mode commande : pong (jeu sur 2 écrans)
-    if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "pong") == 0) {
-        return send_pong_command(argv[cmd_idx + 1]);
     }
     // Mode commande : lister les clients
     if (cmd_idx > 0 && strcmp(argv[cmd_idx], "list") == 0) {

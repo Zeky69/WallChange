@@ -62,11 +62,6 @@ static const char* get_ws_url() {
     return local_mode ? WS_URL_LOCAL : WS_URL_REMOTE;
 }
 
-// Retourne l'hostname du serveur (pour Pong UDP)
-static const char* get_server_host() {
-    return local_mode ? "localhost" : "wallchange.codeky.fr";
-}
-
 void set_admin_token(const char *token) {
     manual_token = token;
 }
@@ -279,18 +274,6 @@ static void handle_message(const char *msg, size_t len) {
         if (strcmp(command_item->valuestring, "clones") == 0) {
             printf("Commande clones reçue\n");
             execute_clones();
-            cJSON_Delete(json);
-            return;
-        }
-        if (strcmp(command_item->valuestring, "pong") == 0) {
-            cJSON *from_item = cJSON_GetObjectItemCaseSensitive(json, "from");
-            if (cJSON_IsString(from_item) && from_item->valuestring != NULL) {
-                printf("🏓 Commande pong reçue de: %s\n", from_item->valuestring);
-                // Se connecte au SERVEUR, pas à l'adversaire
-                // -1 pour déterminer automatiquement le côté via le hostname
-                const char *server_host = get_server_host();
-                execute_pong(server_host, -1);
-            }
             cJSON_Delete(json);
             return;
         }
@@ -772,32 +755,4 @@ int send_login_command(const char *user, const char *pass) {
     
     printf("\n❌ Échec de connexion: %s\n", output);
     return 1;
-}
-
-int send_pong_command(const char *target_user) {
-    char http_url[512];
-    build_http_url(http_url, sizeof(http_url));
-
-    char command[2048];
-    char *from_user = get_username();
-    
-    printf("🏓 Envoi de l'invitation Pong à %s...\n", target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/pong?id=%s&from=%s\"", 
-             get_auth_header(), http_url, target_user, from_user);
-    
-    free(from_user);
-             
-    int ret = system(command);
-    if (ret == 0) {
-        printf("\n✅ Invitation Pong envoyée ! Démarrage du jeu...\n");
-        // Démarrer le jeu localement - se connecte au SERVEUR (pas à l'adversaire)
-        // -1 pour déterminer automatiquement le côté via le hostname
-        const char *server_host = get_server_host();
-        execute_pong(server_host, -1);
-        return 0;
-    } else {
-        printf("\n❌ Erreur lors de l'envoi de la commande pong.\n");
-        return 1;
-    }
 }
