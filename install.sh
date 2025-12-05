@@ -22,7 +22,10 @@ if [ -d ".git" ] && grep -q "WallChange" .git/config 2>/dev/null; then
     PROJECT_DIR=$(pwd)
 else
     if [ -d "$CLONE_DIR" ]; then
-        cd "$CLONE_DIR" && git fetch -q && git checkout -q master && git pull -q origin master
+        cd "$CLONE_DIR"
+        # Reset le repo local pour éviter les conflits de branches divergentes
+        git fetch -q origin master
+        git reset -q --hard origin/master
     else
         git clone -q -b master "$REPO_URL" "$CLONE_DIR"
         cd "$CLONE_DIR"
