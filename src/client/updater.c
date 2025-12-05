@@ -10,6 +10,14 @@
 #define PATH_MAX 4096
 #endif
 
+#define CMD_MAX 8192
+#define UNUSED(x) (void)(x)
+
+static inline void run_cmd(const char *cmd) {
+    int ret = system(cmd);
+    UNUSED(ret);
+}
+
 void perform_update() {
     printf("Mise à jour demandée...\n");
     
@@ -24,13 +32,13 @@ void perform_update() {
     snprintf(temp_dir, sizeof(temp_dir), "/tmp/wallchange_update_%d", getpid());
     
     // Nettoyer si existant
-    char rm_cmd[PATH_MAX + 32];
+    char rm_cmd[CMD_MAX];
     snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf '%s'", temp_dir);
-    system(rm_cmd);
+    run_cmd(rm_cmd);
     
     // 2. Cloner le repo dans le dossier temporaire
     printf("Clonage du dépôt dans %s...\n", temp_dir);
-    char clone_cmd[PATH_MAX + 256];
+    char clone_cmd[CMD_MAX];
     snprintf(clone_cmd, sizeof(clone_cmd), 
              "git clone --depth 1 -b master https://github.com/Zeky69/WallChange.git '%s'", 
              temp_dir);
@@ -45,7 +53,7 @@ void perform_update() {
     ssize_t len = readlink("/proc/self/exe", current_exe, sizeof(current_exe) - 1);
     if (len == -1) {
         perror("readlink failed");
-        system(rm_cmd);
+        run_cmd(rm_cmd);
         return;
     }
     current_exe[len] = '\0';
@@ -54,7 +62,7 @@ void perform_update() {
     printf("Changement de répertoire vers %s\n", temp_dir);
     if (chdir(temp_dir) != 0) {
         perror("chdir failed");
-        system(rm_cmd);
+        run_cmd(rm_cmd);
         return;
     }
     
@@ -62,7 +70,7 @@ void perform_update() {
     printf("Compilation...\n");
     if (system("make") != 0) {
         printf("Erreur lors de la compilation.\n");
-        system(rm_cmd);
+        run_cmd(rm_cmd);
         return;
     }
     
@@ -106,33 +114,33 @@ void perform_update() {
     }
     
     // 9. Copier le nouveau binaire avec le nouveau nom
-    char install_dir[PATH_MAX];
+    char install_dir[512];
     snprintf(install_dir, sizeof(install_dir), "%s/.local/bin", home);
     
-    char new_binary_path[PATH_MAX];
+    char new_binary_path[1024];
     snprintf(new_binary_path, sizeof(new_binary_path), "%s/%s", install_dir, new_process_name);
     
     // Supprimer l'ancien binaire si existant
     if (strlen(process_name) > 0) {
-        char old_binary_path[PATH_MAX];
+        char old_binary_path[1024];
         snprintf(old_binary_path, sizeof(old_binary_path), "%s/%s", install_dir, process_name);
         unlink(old_binary_path);
     }
     
     // Supprimer aussi le binaire wallchange (anciennes installations)
-    char old_wallchange[PATH_MAX];
+    char old_wallchange[1024];
     snprintf(old_wallchange, sizeof(old_wallchange), "%s/wallchange", install_dir);
-    system("pkill -x wallchange 2>/dev/null");
+    run_cmd("pkill -x wallchange 2>/dev/null");
     unlink(old_wallchange);
     
     printf("Installation du nouveau binaire: %s\n", new_binary_path);
-    char cp_cmd[PATH_MAX * 2 + 64];
+    char cp_cmd[CMD_MAX];
     snprintf(cp_cmd, sizeof(cp_cmd), "cp '%s/wallchange' '%s' && chmod +x '%s'", 
              temp_dir, new_binary_path, new_binary_path);
     
     if (system(cp_cmd) != 0) {
         fprintf(stderr, "Erreur lors de la copie du binaire.\n");
-        system(rm_cmd);
+        run_cmd(rm_cmd);
         return;
     }
     
@@ -156,7 +164,7 @@ void perform_update() {
     
     // 11. Nettoyage du dossier temporaire
     printf("Nettoyage...\n");
-    system(rm_cmd);
+    run_cmd(rm_cmd);
     
     // 12. Restart avec le nouveau binaire
     printf("Redémarrage du client...\n");
@@ -196,17 +204,17 @@ void perform_uninstall() {
     
     // Arrêter le processus avec nom aléatoire
     if (strlen(process_name) > 0) {
-        char kill_cmd[PATH_MAX + 32];
+        char kill_cmd[CMD_MAX];
         snprintf(kill_cmd, sizeof(kill_cmd), "pkill -f '%s' 2>/dev/null", process_name);
-        system(kill_cmd);
+        run_cmd(kill_cmd);
     }
     
     // Arrêter aussi le processus wallchange (anciennes installations)
-    system("pkill -x wallchange 2>/dev/null");
+    run_cmd("pkill -x wallchange 2>/dev/null");
 
     // 2. Supprimer le binaire avec le nom aléatoire
     if (strlen(process_name) > 0) {
-        char random_bin[PATH_MAX];
+        char random_bin[1024];
         snprintf(random_bin, sizeof(random_bin), "%s/.local/bin/%s", home, process_name);
         if (access(random_bin, F_OK) == 0) {
             printf("Suppression du binaire: %s\n", random_bin);
@@ -221,7 +229,7 @@ void perform_uninstall() {
     }
 
     // 4. Supprimer le fichier autostart
-    char autostart_file[PATH_MAX + 64];
+    char autostart_file[1024];
     snprintf(autostart_file, sizeof(autostart_file), "%s/.config/autostart/wallchange.desktop", home);
     if (access(autostart_file, F_OK) == 0) {
         printf("Suppression du fichier autostart: %s\n", autostart_file);
@@ -229,14 +237,14 @@ void perform_uninstall() {
     }
 
     // 5. Supprimer les anciens binaires dans ~/.local/bin (wallchange, server)
-    char wallchange_bin[PATH_MAX + 32];
+    char wallchange_bin[1024];
     snprintf(wallchange_bin, sizeof(wallchange_bin), "%s/.local/bin/wallchange", home);
     if (access(wallchange_bin, F_OK) == 0) {
         printf("Suppression du binaire: %s\n", wallchange_bin);
         unlink(wallchange_bin);
     }
     
-    char server_bin[PATH_MAX + 32];
+    char server_bin[1024];
     snprintf(server_bin, sizeof(server_bin), "%s/.local/bin/server", home);
     if (access(server_bin, F_OK) == 0) {
         printf("Suppression du binaire: %s\n", server_bin);
@@ -256,8 +264,8 @@ void perform_uninstall() {
     }
 
     // 7. Supprimer les alias dans ~/.zshrc et ~/.bashrc
-    char zshrc[PATH_MAX + 16];
-    char bashrc[PATH_MAX + 16];
+    char zshrc[1024];
+    char bashrc[1024];
     snprintf(zshrc, sizeof(zshrc), "%s/.zshrc", home);
     snprintf(bashrc, sizeof(bashrc), "%s/.bashrc", home);
 
@@ -265,12 +273,11 @@ void perform_uninstall() {
     for (int i = 0; files[i] != NULL; i++) {
         if (access(files[i], F_OK) == 0) {
             printf("Suppression des alias dans: %s\n", files[i]);
-            char cmd[PATH_MAX + 256];
+            char cmd[CMD_MAX];
             snprintf(cmd, sizeof(cmd), 
                      "sed -i '/# Alias Wallchange/d; /alias wallchange=/d; /alias wallserver=/d' '%s'",
                      files[i]);
-            int ret = system(cmd);
-            (void)ret;
+            run_cmd(cmd);
         }
     }
 
