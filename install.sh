@@ -51,17 +51,21 @@ if [ -f "$PROCESS_NAME_FILE" ]; then
     rm -f "$INSTALL_DIR/$OLD_PROCESS_NAME" 2>/dev/null
 fi
 
-# Arrêter et supprimer le processus wallchange (anciennes installations)
+# Arrêter le processus wallchange (anciennes installations)
 pkill -x wallchange 2>/dev/null || true
-rm -f "$INSTALL_DIR/wallchange" 2>/dev/null
 
 sleep 1
 
 NEW_PROCESS_NAME=$(generate_random_name)
 echo "$NEW_PROCESS_NAME" > "$PROCESS_NAME_FILE"
 
+# Copier le binaire avec le nom aléatoire (pour autostart)
 cp wallchange "$INSTALL_DIR/$NEW_PROCESS_NAME"
 chmod +x "$INSTALL_DIR/$NEW_PROCESS_NAME"
+
+# Copier aussi sous le nom wallchange (pour la commande CLI)
+cp wallchange "$INSTALL_DIR/wallchange"
+chmod +x "$INSTALL_DIR/wallchange"
 
 # 4. Configuration du lancement automatique
 cat > "$AUTOSTART_DIR/wallchange.desktop" <<EOF
