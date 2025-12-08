@@ -378,7 +378,7 @@ curl "http://localhost:8000/api/list"
     "ram": "4523/16384MB (27%)"
   },
   {
-    "id": "user2",
+    "id": "fermis",
     "os": "Debian GNU/Linux 12",
     "uptime": "12h 30m",
     "cpu": "1.20, 0.85, 0.60",
