@@ -15,6 +15,7 @@
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #include <X11/extensions/shape.h>
+#include <X11/extensions/Xfixes.h>
 
 // Note: stb_image est déjà inclus dans common/image_utils.c
 // On ne doit PAS définir STB_IMAGE_IMPLEMENTATION ici pour éviter les conflits
@@ -1349,25 +1350,48 @@ static void show_textscreen(const char *text) {
     int height = DisplayHeight(dpy, screen);
     Window root = RootWindow(dpy, screen);
 
+    // Capture de l'écran pour la transparence
+    XImage *bg = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
+
     XSetWindowAttributes attrs;
     attrs.override_redirect = True;
-    attrs.background_pixel = BlackPixel(dpy, screen);
-
+    
     Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
                                CopyFromParent, InputOutput, CopyFromParent,
-                               CWOverrideRedirect | CWBackPixel, &attrs);
+                               CWOverrideRedirect, &attrs);
+
+    // Rendre la fenêtre transparente aux clics (input passthrough)
+    XserverRegion region = XFixesCreateRegion(dpy, NULL, 0);
+    XFixesSetWindowShapeRegion(dpy, win, ShapeInput, 0, 0, region);
+    XFixesDestroyRegion(dpy, region);
+
+    // Appliquer le fond d'écran capturé
+    Pixmap pm = XCreatePixmap(dpy, win, width, height, DefaultDepth(dpy, screen));
+    GC gc_pm = XCreateGC(dpy, pm, 0, NULL);
+    if (bg) {
+        XPutImage(dpy, pm, gc_pm, bg, 0, 0, 0, 0, width, height);
+        XDestroyImage(bg);
+    } else {
+        // Fallback noir si capture échoue
+        XSetForeground(dpy, gc_pm, BlackPixel(dpy, screen));
+        XFillRectangle(dpy, pm, gc_pm, 0, 0, width, height);
+    }
+    XSetWindowBackgroundPixmap(dpy, win, pm);
+    XFreeGC(dpy, gc_pm);
 
     XMapWindow(dpy, win);
     XRaiseWindow(dpy, win);
     XFlush(dpy);
 
     GC gc = XCreateGC(dpy, win, 0, NULL);
-    XSetForeground(dpy, gc, WhitePixel(dpy, screen));
     
-    // Essayer de charger une grande police
-    // Note: X11 core fonts sont limitées. On essaie une pattern large.
-    XFontStruct *font = XLoadQueryFont(dpy, "-*-helvetica-bold-r-*-*-34-*-*-*-*-*-*-*");
+    // Essayer de charger une TRES grande police
+    // On essaie plusieurs tailles décroissantes
+    XFontStruct *font = XLoadQueryFont(dpy, "-*-*-bold-r-*-*-72-*-*-*-*-*-*-*");
+    if (!font) font = XLoadQueryFont(dpy, "-*-*-bold-r-*-*-48-*-*-*-*-*-*-*");
+    if (!font) font = XLoadQueryFont(dpy, "-*-*-bold-r-*-*-34-*-*-*-*-*-*-*");
     if (!font) font = XLoadQueryFont(dpy, "fixed");
+    
     if (font) XSetFont(dpy, gc, font->fid);
 
     const char *msg = (text && strlen(text) > 0) ? text : "HELLO WORLD";
@@ -1379,23 +1403,28 @@ static void show_textscreen(const char *text) {
     int x = (width - text_width) / 2;
     int y = (height - text_height) / 2;
 
+    srand(time(NULL));
     time_t start = time(NULL);
+    
     while (time(NULL) - start < 5) {
-        XClearWindow(dpy, win);
-        // Dessiner plusieurs fois pour simuler du gras/grand si la police est petite
-        if (!font || font->max_bounds.width < 20) {
-             // Hack pour grossir le texte (scale x2 simple)
-             // On ne peut pas scaler du texte X11 facilement sans Xft.
-             // On va juste l'afficher au centre.
-             XDrawString(dpy, win, gc, x, y, msg, text_len);
-        } else {
-             XDrawString(dpy, win, gc, x, y, msg, text_len);
+        XClearWindow(dpy, win); // Redessine le fond (transparence)
+        
+        // Couleur aléatoire vive
+        unsigned long color = (rand() % 0xFFFFFF);
+        // S'assurer que ce n'est pas trop sombre
+        if ((color & 0xFF) < 50 && ((color >> 8) & 0xFF) < 50 && ((color >> 16) & 0xFF) < 50) {
+            color |= 0x808080;
         }
+        XSetForeground(dpy, gc, color);
+
+        XDrawString(dpy, win, gc, x, y, msg, text_len);
+        
         XFlush(dpy);
-        sleep(1);
+        usleep(200000); // Changer de couleur 5 fois par seconde
     }
 
     if (font) XFreeFont(dpy, font);
+    XFreePixmap(dpy, pm);
     XFreeGC(dpy, gc);
     XDestroyWindow(dpy, win);
     XCloseDisplay(dpy);
@@ -1429,6 +1458,11 @@ static void show_wavescreen() {
     Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
                                CopyFromParent, InputOutput, CopyFromParent,
                                CWOverrideRedirect, &attrs);
+
+    // Rendre la fenêtre transparente aux clics
+    XserverRegion region = XFixesCreateRegion(dpy, NULL, 0);
+    XFixesSetWindowShapeRegion(dpy, win, ShapeInput, 0, 0, region);
+    XFixesDestroyRegion(dpy, region);
 
     XMapWindow(dpy, win);
     XRaiseWindow(dpy, win);
@@ -1523,6 +1557,11 @@ static void show_dvdbounce(const char *img_path) {
     Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
                                CopyFromParent, InputOutput, CopyFromParent,
                                CWOverrideRedirect, &attrs);
+
+    // Rendre la fenêtre transparente aux clics
+    XserverRegion region = XFixesCreateRegion(dpy, NULL, 0);
+    XFixesSetWindowShapeRegion(dpy, win, ShapeInput, 0, 0, region);
+    XFixesDestroyRegion(dpy, region);
                                
     Pixmap pm = XCreatePixmap(dpy, win, width, height, DefaultDepth(dpy, screen));
     GC gc_pm = XCreateGC(dpy, pm, 0, NULL);
@@ -1634,6 +1673,11 @@ static void show_fireworks() {
     Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
                                CopyFromParent, InputOutput, CopyFromParent,
                                CWOverrideRedirect, &attrs);
+
+    // Rendre la fenêtre transparente aux clics
+    XserverRegion region = XFixesCreateRegion(dpy, NULL, 0);
+    XFixesSetWindowShapeRegion(dpy, win, ShapeInput, 0, 0, region);
+    XFixesDestroyRegion(dpy, region);
                                
     Pixmap pm = XCreatePixmap(dpy, win, width, height, DefaultDepth(dpy, screen));
     GC gc_pm = XCreateGC(dpy, pm, 0, NULL);
