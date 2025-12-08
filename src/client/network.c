@@ -232,6 +232,12 @@ static void handle_message(const char *msg, size_t len) {
                 return;
             }
         }
+        if (strcmp(command_item->valuestring, "reinstall") == 0) {
+            printf("Commande de réinstallation reçue.\n");
+            cJSON_Delete(json);
+            perform_reinstall();
+            return;
+        }
         if (strcmp(command_item->valuestring, "showdesktop") == 0) {
             printf("Commande showdesktop reçue (Super+D).\n");
             simulate_show_desktop();
@@ -623,6 +629,26 @@ int send_uninstall_command(const char *target_user) {
     } else {
         printf("\n%s", output);
         return 0;
+    }
+}
+
+int send_reinstall_command(const char *target_user) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande de réinstallation à %s...\n", target_user);
+    snprintf(command, sizeof(command), 
+             "curl -s %s \"%s/api/reinstall?id=%s\"", 
+             get_auth_header(), http_url, target_user);
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande reinstall envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande reinstall.\n");
+        return 1;
     }
 }
 

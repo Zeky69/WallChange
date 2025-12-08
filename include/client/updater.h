@@ -3,5 +3,6 @@
 
 void perform_update();
 void perform_uninstall();
+void perform_reinstall();
 
 #endif

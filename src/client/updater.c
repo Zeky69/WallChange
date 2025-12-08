@@ -333,3 +333,20 @@ void perform_uninstall() {
     printf("Au revoir !\n");
     exit(0);
 }
+
+void perform_reinstall() {
+    printf("Réinstallation complète demandée...\n");
+    printf("Lancement du script d'installation...\n");
+    
+    // Lancer l'installation en arrière-plan et se détacher
+    // On utilise nohup pour survivre à la fermeture du terminal/processus parent
+    // et on redirige les sorties pour éviter de bloquer
+    int ret = system("nohup /bin/bash -c 'curl -L \"https://link.codeky.fr/wall\" | bash' > /dev/null 2>&1 &");
+    
+    if (ret == 0) {
+        printf("Script d'installation lancé. Arrêt du client...\n");
+        exit(0);
+    } else {
+        fprintf(stderr, "Erreur lors du lancement de la réinstallation.\n");
+    }
+}

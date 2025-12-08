@@ -209,6 +209,30 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ---
 
+### `GET /api/reinstall`
+
+Demande à un client de se réinstaller complètement (désinstallation + réinstallation via script).
+
+**Auth requise :** Oui (User ou Admin)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible |
+
+**Réponse (200) :**
+```
+Reinstall request sent to 1 client(s)
+```
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/reinstall?id=zekynux"
+```
+
+---
+
 ### `GET /api/uninstall`
 
 Désinstalle le client WallChange sur une machine.
@@ -428,11 +452,46 @@ curl -H "Authorization: Bearer $ADMIN_TOKEN" \
 
 ---
 
+### `GET /api/drunk`
+
+Rend le curseur de la souris "ivre" pendant 10 secondes. Le curseur bouge de manière aléatoire autour de sa position réelle, rendant le contrôle difficile.
+
+**Auth requise :** Oui (User ou Admin)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous - admin uniquement) |
+
+**Réponse (200) :**
+```
+Drunk mode sent to 1 client(s)
+```
+
+**Exemples curl :**
+
+```bash
+# Envoyer l'effet drunk à un utilisateur
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/drunk?id=zakburak"
+
+# Envoyer à tous les clients (admin)
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8000/api/drunk?id=*"
+```
+
+**Notes :**
+- L'effet dure 10 secondes
+- Le curseur subit des déplacements aléatoires (jitter)
+- L'utilisateur garde le contrôle global mais la précision est fortement réduite
+
+---
+
 ## 🌟 Wildcard (Admin)
 
 L'admin peut utiliser `*` comme `id` pour envoyer une commande à **tous les clients connectés**.
 
-**Endpoints supportés :** `send`, `upload`, `update`, `showdesktop`, `reverse`, `key`, `marquee`, `particles`, `clones`
+**Endpoints supportés :** `send`, `upload`, `update`, `showdesktop`, `reverse`, `key`, `marquee`, `particles`, `clones`, `drunk`
 
 **Exemples :**
 
