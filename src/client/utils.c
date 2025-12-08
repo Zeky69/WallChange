@@ -1046,3 +1046,330 @@ void execute_drunk(void) {
 }
 
 
+
+// ==========================================
+// NOUVEAUX EFFETS
+// ==========================================
+
+// --- FAKE TERMINAL (MATRIX) ---
+static void show_faketerminal() {
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) return;
+
+    int screen = DefaultScreen(dpy);
+    int width = DisplayWidth(dpy, screen);
+    int height = DisplayHeight(dpy, screen);
+    Window root = RootWindow(dpy, screen);
+
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    attrs.background_pixel = BlackPixel(dpy, screen);
+
+    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
+                               CopyFromParent, InputOutput, CopyFromParent,
+                               CWOverrideRedirect | CWBackPixel, &attrs);
+
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
+    XFlush(dpy);
+
+    GC gc = XCreateGC(dpy, win, 0, NULL);
+    XSetForeground(dpy, gc, 0x00FF00); // Green
+    
+    XFontStruct *font = XLoadQueryFont(dpy, "fixed");
+    if (font) XSetFont(dpy, gc, font->fid);
+
+    int char_width = font ? font->max_bounds.width : 10;
+    int char_height = font ? font->ascent + font->descent : 15;
+    int cols = width / char_width + 1;
+    int *drops = calloc(cols, sizeof(int));
+
+    time_t start = time(NULL);
+    while (time(NULL) - start < 10) { // 10 secondes
+        // Effacer légèrement (trail effect) - simulation simple
+        // Pour un vrai effet Matrix, on devrait dessiner des rects noirs semi-transparents
+        // mais X11 pur ne gère pas l'alpha facilement.
+        // On va juste redessiner quelques rects noirs aléatoires pour effacer
+        
+        for (int i = 0; i < cols; i++) {
+            char c = (rand() % 94) + 33; // ASCII printable
+            int x = i * char_width;
+            int y = drops[i] * char_height;
+
+            // Dessiner le caractère
+            XDrawString(dpy, win, gc, x, y, &c, 1);
+
+            // Parfois effacer la colonne pour recommencer
+            if (y > height && (rand() % 20) > 18) {
+                drops[i] = 0;
+            } else {
+                drops[i]++;
+            }
+            
+            // Effacer le caractère au dessus (pour faire tomber)
+            // Ou laisser la trace... Matrix laisse une trace.
+            // On va effacer un bloc plus haut pour limiter la trace
+            if (drops[i] > 15) {
+                 XSetForeground(dpy, gc, BlackPixel(dpy, screen));
+                 XFillRectangle(dpy, win, gc, x, (drops[i] - 15) * char_height, char_width, char_height);
+                 XSetForeground(dpy, gc, 0x00FF00);
+            }
+        }
+        XFlush(dpy);
+        usleep(30000);
+    }
+
+    free(drops);
+    if (font) XFreeFont(dpy, font);
+    XFreeGC(dpy, gc);
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
+}
+
+void execute_faketerminal(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        srand(time(NULL) ^ getpid());
+        show_faketerminal();
+        exit(0);
+    }
+}
+
+// --- CONFETTI ---
+typedef struct {
+    float x, y;
+    float vx, vy;
+    unsigned long color;
+    int size;
+} Confetti;
+
+static void show_confetti(const char *img_path) {
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) return;
+
+    int screen = DefaultScreen(dpy);
+    int width = DisplayWidth(dpy, screen);
+    int height = DisplayHeight(dpy, screen);
+    Window root = RootWindow(dpy, screen);
+
+    // Créer une fenêtre transparente (nécessite un compositeur pour la vraie transparence)
+    // Sans compositeur, on peut copier le fond d'écran actuel
+    XImage *bg = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
+    
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    
+    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
+                               CopyFromParent, InputOutput, CopyFromParent,
+                               CWOverrideRedirect, &attrs);
+                               
+    // Définir le background avec l'image capturée
+    Pixmap pm = XCreatePixmap(dpy, win, width, height, DefaultDepth(dpy, screen));
+    GC gc_pm = XCreateGC(dpy, pm, 0, NULL);
+    XPutImage(dpy, pm, gc_pm, bg, 0, 0, 0, 0, width, height);
+    XSetWindowBackgroundPixmap(dpy, win, pm);
+    XFreeGC(dpy, gc_pm);
+    XDestroyImage(bg);
+
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
+    XFlush(dpy);
+
+    GC gc = XCreateGC(dpy, win, 0, NULL);
+    
+    int num_confetti = 200;
+    Confetti *parts = malloc(sizeof(Confetti) * num_confetti);
+    unsigned long colors[] = {0xFF0000, 0x00FF00, 0x0000FF, 0xFFFF00, 0xFF00FF, 0x00FFFF, 0xFFFFFF};
+    
+    for (int i = 0; i < num_confetti; i++) {
+        parts[i].x = rand() % width;
+        parts[i].y = rand() % height - height; // Commencer au dessus
+        parts[i].vx = (rand() % 10 - 5) / 2.0;
+        parts[i].vy = (rand() % 10 + 5);
+        parts[i].color = colors[rand() % 7];
+        parts[i].size = rand() % 10 + 5;
+    }
+
+    time_t start = time(NULL);
+    while (time(NULL) - start < 10) {
+        // Redessiner le fond (effacer les confettis précédents)
+        // Pour optimiser, on pourrait redessiner juste les zones sales, mais ici on clear tout
+        XClearWindow(dpy, win);
+        
+        for (int i = 0; i < num_confetti; i++) {
+            parts[i].x += parts[i].vx;
+            parts[i].y += parts[i].vy;
+            
+            // Gravité / Vent
+            parts[i].vx += (rand() % 3 - 1) * 0.1;
+            
+            if (parts[i].y > height) {
+                parts[i].y = -10;
+                parts[i].x = rand() % width;
+            }
+            
+            XSetForeground(dpy, gc, parts[i].color);
+            XFillRectangle(dpy, win, gc, (int)parts[i].x, (int)parts[i].y, parts[i].size, parts[i].size);
+        }
+        
+        XFlush(dpy);
+        usleep(30000);
+    }
+
+    free(parts);
+    XFreePixmap(dpy, pm);
+    XFreeGC(dpy, gc);
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
+}
+
+void execute_confetti(const char *url) {
+    char filepath[512] = {0};
+    if (url && strlen(url) > 0) {
+        char *username = get_username();
+        snprintf(filepath, sizeof(filepath), "/home/%s/.cache/wallchange_confetti.png", username);
+        free(username);
+        
+        // Créer le dossier cache si nécessaire
+        char *dir = strdup(filepath);
+        char *slash = strrchr(dir, '/');
+        if (slash) {
+            *slash = '\0';
+            mkdir(dir, 0755);
+        }
+        free(dir);
+
+        if (!download_image(url, filepath)) {
+            filepath[0] = '\0'; // Fallback aux confettis couleurs
+        }
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        srand(time(NULL) ^ getpid());
+        show_confetti(filepath[0] ? filepath : NULL);
+        exit(0);
+    }
+}
+
+// --- SPOTLIGHT ---
+static void show_spotlight() {
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) return;
+
+    int screen = DefaultScreen(dpy);
+    int width = DisplayWidth(dpy, screen);
+    int height = DisplayHeight(dpy, screen);
+    Window root = RootWindow(dpy, screen);
+
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    attrs.background_pixel = BlackPixel(dpy, screen);
+
+    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
+                               CopyFromParent, InputOutput, CopyFromParent,
+                               CWOverrideRedirect | CWBackPixel, &attrs);
+
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
+    
+    // Créer un GC pour le dessin si besoin
+    // GC gc = XCreateGC(dpy, win, 0, NULL);
+
+    time_t start = time(NULL);
+    int radius = 150;
+
+    while (time(NULL) - start < 10) {
+        Window root_return, child_return;
+        int root_x, root_y, win_x, win_y;
+        unsigned int mask_return;
+
+        if (XQueryPointer(dpy, root, &root_return, &child_return, 
+                          &root_x, &root_y, &win_x, &win_y, &mask_return)) {
+            
+            // Créer la région pour tout l'écran
+            XRectangle screen_rect = {0, 0, width, height};
+            Region region = XCreateRegion();
+            XUnionRectWithRegion(&screen_rect, region, region);
+            
+            // Créer la région pour le trou (cercle approximé par octogone ou rects)
+            // XShape ne supporte pas les cercles parfaits directement, il faut une bitmap ou des rects
+            // On va utiliser une bitmap pour faire un cercle propre
+            
+            Pixmap mask = XCreatePixmap(dpy, win, width, height, 1);
+            GC mask_gc = XCreateGC(dpy, mask, 0, NULL);
+            
+            // Remplir tout en noir (opaque)
+            XSetForeground(dpy, mask_gc, 1);
+            XFillRectangle(dpy, mask, mask_gc, 0, 0, width, height);
+            
+            // Dessiner le cercle en blanc (transparent pour ShapeBounding ? Non, 1=opaque, 0=transparent)
+            // Pour XShapeCombineMask: 1 = opaque (montre la fenêtre noire), 0 = transparent (montre le bureau)
+            // Donc on veut tout à 1 sauf le cercle à 0.
+            
+            XSetForeground(dpy, mask_gc, 0);
+            XFillArc(dpy, mask, mask_gc, root_x - radius, root_y - radius, radius*2, radius*2, 0, 360*64);
+            
+            XShapeCombineMask(dpy, win, ShapeBounding, 0, 0, mask, ShapeSet);
+            
+            XFreeGC(dpy, mask_gc);
+            XFreePixmap(dpy, mask);
+            XDestroyRegion(region);
+        }
+        
+        XFlush(dpy);
+        usleep(20000);
+    }
+
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
+}
+
+void execute_spotlight(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        show_spotlight();
+        exit(0);
+    }
+}
+
+// --- SHAKE ---
+static char* get_primary_output() {
+    FILE *fp = popen("xrandr --current | grep ' connected' | head -n 1 | cut -d ' ' -f1", "r");
+    if (!fp) return NULL;
+    static char output[64];
+    if (fgets(output, sizeof(output), fp)) {
+        size_t len = strlen(output);
+        if (len > 0 && output[len-1] == '\n') output[len-1] = '\0';
+    }
+    pclose(fp);
+    return output;
+}
+
+void execute_shake(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        char *output = get_primary_output();
+        if (!output || strlen(output) == 0) exit(1);
+        
+        srand(time(NULL) ^ getpid());
+        time_t start = time(NULL);
+        char cmd[512];
+        
+        while (time(NULL) - start < 5) { // 5 secondes
+            int dx = (rand() % 21) - 10; // -10 à 10
+            int dy = (rand() % 21) - 10;
+            
+            snprintf(cmd, sizeof(cmd), "xrandr --output %s --transform 1,0,%d,0,1,%d,0,0,1", output, dx, dy);
+            if (system(cmd) != 0) { /* ignore */ }
+            
+            usleep(50000);
+        }
+        
+        // Reset
+        snprintf(cmd, sizeof(cmd), "xrandr --output %s --transform none", output);
+        if (system(cmd) != 0) { /* ignore */ }
+        
+        exit(0);
+    }
+}

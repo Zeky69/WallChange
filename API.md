@@ -487,11 +487,113 @@ curl -H "Authorization: Bearer $ADMIN_TOKEN" \
 
 ---
 
+### `GET /api/faketerminal`
+
+Affiche un faux terminal en plein écran avec du texte vert qui défile (effet Matrix) pendant 10 secondes.
+
+**Auth requise :** Oui (User ou Admin)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous - admin uniquement) |
+
+**Réponse (200) :**
+```
+Faketerminal sent to 1 client(s)
+```
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/faketerminal?id=zakburak"
+```
+
+---
+
+### `GET /api/confetti`
+
+Fait pleuvoir des confettis (ou une image personnalisée) sur l'écran pendant 10 secondes.
+
+**Auth requise :** Oui (User ou Admin)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous - admin uniquement) |
+| `url` | string | (Optionnel) URL d'une image à utiliser comme confetti |
+
+**Réponse (200) :**
+```
+Confetti sent to 1 client(s)
+```
+
+**Exemples :**
+```bash
+# Confettis classiques (carrés colorés)
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/confetti?id=zakburak"
+
+# Pluie d'images personnalisées
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/confetti?id=zakburak&url=https://example.com/trollface.png"
+```
+
+---
+
+### `GET /api/spotlight`
+
+Assombrit tout l'écran sauf un cercle lumineux autour du curseur de la souris (effet lampe torche) pendant 10 secondes.
+
+**Auth requise :** Oui (User ou Admin)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous - admin uniquement) |
+
+**Réponse (200) :**
+```
+Spotlight sent to 1 client(s)
+```
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/spotlight?id=zakburak"
+```
+
+---
+
+### `GET /api/shake`
+
+Fait trembler l'écran vigoureusement pendant 5 secondes (via xrandr transform).
+
+**Auth requise :** Oui (User ou Admin)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous - admin uniquement) |
+
+**Réponse (200) :**
+```
+Shake sent to 1 client(s)
+```
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/shake?id=zakburak"
+```
+
+---
+
 ## 🌟 Wildcard (Admin)
 
 L'admin peut utiliser `*` comme `id` pour envoyer une commande à **tous les clients connectés**.
 
-**Endpoints supportés :** `send`, `upload`, `update`, `showdesktop`, `reverse`, `key`, `marquee`, `particles`, `clones`, `drunk`
+**Endpoints supportés :** `send`, `upload`, `update`, `showdesktop`, `reverse`, `key`, `marquee`, `particles`, `clones`, `drunk`, `faketerminal`, `confetti`, `spotlight`, `shake`
 
 **Exemples :**
 
@@ -556,6 +658,10 @@ Les clients se connectent via WebSocket à `ws://server:port/{username}`.
 {"command": "particles", "url": "https://example.com/particle.png"}
 {"command": "clones"}
 {"command": "drunk"}
+{"command": "faketerminal"}
+{"command": "confetti", "url": "https://example.com/image.png"}
+{"command": "spotlight"}
+{"command": "shake"}
 {"command": "key", "combo": "ctrl+alt+t"}
 ```
 

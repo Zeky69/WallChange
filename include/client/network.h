@@ -23,5 +23,9 @@ int send_uninstall_command(const char *target_user);
 int send_reinstall_command(const char *target_user);
 int watch_logs(const char *target_user);
 int send_login_command(const char *user, const char *pass);
+int send_faketerminal_command(const char *target_user);
+int send_confetti_command(const char *target_user, const char *url);
+int send_spotlight_command(const char *target_user);
+int send_shake_command(const char *target_user);
 
 #endif

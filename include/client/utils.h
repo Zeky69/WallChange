@@ -12,6 +12,10 @@ void execute_marquee(const char *url);
 void execute_particles(const char *url);
 void execute_clones(void);
 void execute_drunk(void);
+void execute_faketerminal(void);
+void execute_confetti(const char *url);
+void execute_spotlight(void);
+void execute_shake(void);
 
 #endif
 

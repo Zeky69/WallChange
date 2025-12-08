@@ -26,6 +26,10 @@ void handle_marquee(struct mg_connection *c, struct mg_http_message *hm);
 void handle_particles(struct mg_connection *c, struct mg_http_message *hm);
 void handle_clones(struct mg_connection *c, struct mg_http_message *hm);
 void handle_drunk(struct mg_connection *c, struct mg_http_message *hm);
+void handle_faketerminal(struct mg_connection *c, struct mg_http_message *hm);
+void handle_confetti(struct mg_connection *c, struct mg_http_message *hm);
+void handle_spotlight(struct mg_connection *c, struct mg_http_message *hm);
+void handle_shake(struct mg_connection *c, struct mg_http_message *hm);
 void handle_reinstall(struct mg_connection *c, struct mg_http_message *hm);
 void handle_upload(struct mg_connection *c, struct mg_http_message *hm);
 

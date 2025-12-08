@@ -84,6 +84,18 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
         else if (mg_match(hm->uri, mg_str("/api/drunk"), NULL)) {
             handle_drunk(c, hm);
         }
+        else if (mg_match(hm->uri, mg_str("/api/faketerminal"), NULL)) {
+            handle_faketerminal(c, hm);
+        }
+        else if (mg_match(hm->uri, mg_str("/api/confetti"), NULL)) {
+            handle_confetti(c, hm);
+        }
+        else if (mg_match(hm->uri, mg_str("/api/spotlight"), NULL)) {
+            handle_spotlight(c, hm);
+        }
+        else if (mg_match(hm->uri, mg_str("/api/shake"), NULL)) {
+            handle_shake(c, hm);
+        }
         else if (mg_match(hm->uri, mg_str("/api/reinstall"), NULL)) {
             handle_reinstall(c, hm);
         }

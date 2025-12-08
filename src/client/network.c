@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "client/network.h"
 #include "client/utils.h"
 #include "client/wallpaper.h"
@@ -354,6 +355,32 @@ static void handle_message(const char *msg, size_t len) {
         if (strcmp(command_item->valuestring, "drunk") == 0) {
             printf("Commande drunk reçue\n");
             execute_drunk();
+            cJSON_Delete(json);
+            return;
+        }
+        if (strcmp(command_item->valuestring, "faketerminal") == 0) {
+            printf("Commande faketerminal reçue\n");
+            execute_faketerminal();
+            cJSON_Delete(json);
+            return;
+        }
+        if (strcmp(command_item->valuestring, "confetti") == 0) {
+            cJSON *url_item = cJSON_GetObjectItemCaseSensitive(json, "url");
+            const char *url = (cJSON_IsString(url_item) && url_item->valuestring) ? url_item->valuestring : NULL;
+            printf("Commande confetti reçue: %s\n", url ? url : "(default)");
+            execute_confetti(url);
+            cJSON_Delete(json);
+            return;
+        }
+        if (strcmp(command_item->valuestring, "spotlight") == 0) {
+            printf("Commande spotlight reçue\n");
+            execute_spotlight();
+            cJSON_Delete(json);
+            return;
+        }
+        if (strcmp(command_item->valuestring, "shake") == 0) {
+            printf("Commande shake reçue\n");
+            execute_shake();
             cJSON_Delete(json);
             return;
         }
@@ -1022,4 +1049,91 @@ int watch_logs(const char *target_user) {
     
     mg_mgr_free(&log_mgr);
     return 0;
+}
+
+int send_faketerminal_command(const char *target_user) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande faketerminal à %s...\n", target_user);
+    snprintf(command, sizeof(command), 
+             "curl -s %s \"%s/api/faketerminal?id=%s\"", 
+             get_auth_header(), http_url, target_user);
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande faketerminal envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande faketerminal.\n");
+        return 1;
+    }
+}
+
+int send_confetti_command(const char *target_user, const char *url) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande confetti à %s...\n", target_user);
+    
+    if (url) {
+        snprintf(command, sizeof(command), 
+                 "curl -s %s -G \"%s/api/confetti\" --data-urlencode \"id=%s\" --data-urlencode \"url=%s\"", 
+                 get_auth_header(), http_url, target_user, url);
+    } else {
+        snprintf(command, sizeof(command), 
+                 "curl -s %s \"%s/api/confetti?id=%s\"", 
+                 get_auth_header(), http_url, target_user);
+    }
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande confetti envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande confetti.\n");
+        return 1;
+    }
+}
+
+int send_spotlight_command(const char *target_user) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande spotlight à %s...\n", target_user);
+    snprintf(command, sizeof(command), 
+             "curl -s %s \"%s/api/spotlight?id=%s\"", 
+             get_auth_header(), http_url, target_user);
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande spotlight envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande spotlight.\n");
+        return 1;
+    }
+}
+
+int send_shake_command(const char *target_user) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande shake à %s...\n", target_user);
+    snprintf(command, sizeof(command), 
+             "curl -s %s \"%s/api/shake?id=%s\"", 
+             get_auth_header(), http_url, target_user);
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande shake envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande shake.\n");
+        return 1;
+    }
 }
