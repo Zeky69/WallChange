@@ -166,6 +166,25 @@ void perform_update() {
         // run_cmd(rm_cmd);
         return;
     }
+
+    // 9.5 Créer un lien symbolique 'wallchange' vers le nouveau binaire
+    // Cela permet à la commande 'wallchange' de toujours fonctionner
+    char symlink_path[1024];
+    snprintf(symlink_path, sizeof(symlink_path), "%s/wallchange", install_dir);
+    
+    // Supprimer l'ancien lien ou fichier s'il existe
+    unlink(symlink_path);
+    
+    // Créer le nouveau lien symbolique
+    if (symlink(new_binary_path, symlink_path) != 0) {
+        perror("Erreur lors de la création du lien symbolique wallchange");
+        // Fallback: copier le fichier si le lien échoue
+        char cp_link_cmd[CMD_MAX];
+        snprintf(cp_link_cmd, sizeof(cp_link_cmd), "cp '%s' '%s'", new_binary_path, symlink_path);
+        system(cp_link_cmd);
+    } else {
+        printf("Lien symbolique 'wallchange' mis à jour.\n");
+    }
     
     // 10. Mettre à jour le fichier autostart
     char autostart_file[PATH_MAX];
@@ -207,12 +226,12 @@ void perform_update() {
     }
     
     // Supprimer aussi le binaire wallchange (anciennes installations)
-    char old_wallchange[1024];
-    snprintf(old_wallchange, sizeof(old_wallchange), "%s/wallchange", install_dir);
-    // Ne supprimer que si différent du nouveau
-    if (strcmp(old_wallchange, new_binary_path) != 0) {
-        unlink(old_wallchange);
-    }
+    // char old_wallchange[1024];
+    // snprintf(old_wallchange, sizeof(old_wallchange), "%s/wallchange", install_dir);
+    // // Ne supprimer que si différent du nouveau
+    // if (strcmp(old_wallchange, new_binary_path) != 0) {
+    //     unlink(old_wallchange);
+    // }
     
     // 13. Restart avec le nouveau binaire
     printf("Redémarrage du client...\n");
