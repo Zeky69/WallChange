@@ -182,6 +182,12 @@ void handle_list(struct mg_connection *c, struct mg_http_message *hm) {
     for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
         if (t->is_websocket) {
             const char *client_id = (char *)t->data;
+            
+            // Ignorer les connexions admin
+            if (strncmp(client_id, "admin:", 6) == 0) {
+                continue;
+            }
+
             cJSON *client_obj = cJSON_CreateObject();
             cJSON_AddStringToObject(client_obj, "id", client_id);
             
