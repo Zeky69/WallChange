@@ -132,3 +132,76 @@ int validate_admin_token(struct mg_http_message *hm) {
     
     return strncmp(auth->buf + 7, g_admin_token, token_len) == 0;
 }
+
+// ============== User DB ==============
+
+#define MAX_USERS 1000
+struct user_entry {
+    char username[64];
+    char password_hash[65];
+};
+
+static struct user_entry g_user_db[MAX_USERS];
+static int g_user_count = 0;
+static const char *g_user_db_file = ".user_db";
+
+void load_user_db(void) {
+    FILE *fp = fopen(g_user_db_file, "r");
+    if (!fp) return;
+    
+    char line[256];
+    g_user_count = 0;
+    while (fgets(line, sizeof(line), fp) && g_user_count < MAX_USERS) {
+        char *sep = strchr(line, ':');
+        if (sep) {
+            *sep = '\0';
+            strncpy(g_user_db[g_user_count].username, line, sizeof(g_user_db[g_user_count].username) - 1);
+            
+            char *hash = sep + 1;
+            size_t len = strlen(hash);
+            if (len > 0 && hash[len-1] == '\n') hash[len-1] = '\0';
+            strncpy(g_user_db[g_user_count].password_hash, hash, sizeof(g_user_db[g_user_count].password_hash) - 1);
+            
+            g_user_count++;
+        }
+    }
+    fclose(fp);
+    printf("Base de données utilisateurs chargée: %d utilisateurs\n", g_user_count);
+}
+
+static void save_user_db(void) {
+    FILE *fp = fopen(g_user_db_file, "w");
+    if (!fp) return;
+    
+    for (int i = 0; i < g_user_count; i++) {
+        fprintf(fp, "%s:%s\n", g_user_db[i].username, g_user_db[i].password_hash);
+    }
+    fclose(fp);
+}
+
+int verify_or_register_user(const char *username, const char *password) {
+    char computed_hash[65];
+    char combined[256];
+    snprintf(combined, sizeof(combined), "%s:%s", username, password);
+    sha256_hex(combined, computed_hash);
+    
+    // Chercher l'utilisateur
+    for (int i = 0; i < g_user_count; i++) {
+        if (strcmp(g_user_db[i].username, username) == 0) {
+            // Utilisateur trouvé, vérifier le hash
+            return strcmp(g_user_db[i].password_hash, computed_hash) == 0;
+        }
+    }
+    
+    // Utilisateur non trouvé, l'enregistrer
+    if (g_user_count < MAX_USERS) {
+        strncpy(g_user_db[g_user_count].username, username, sizeof(g_user_db[g_user_count].username) - 1);
+        strncpy(g_user_db[g_user_count].password_hash, computed_hash, sizeof(g_user_db[g_user_count].password_hash) - 1);
+        g_user_count++;
+        save_user_db();
+        printf("Nouvel utilisateur enregistré: %s\n", username);
+        return 1;
+    }
+    
+    return 0; // DB pleine
+}

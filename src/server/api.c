@@ -45,12 +45,8 @@ void handle_login(struct mg_connection *c, struct mg_http_message *hm) {
         return;
     }
     
-    if (!g_admin_token_enabled) {
-        mg_http_reply(c, 503, g_cors_headers, "Admin authentication not enabled on this server\n");
-        return;
-    }
-    
-    if (verify_admin_credentials(user, pass)) {
+    // 1. Tentative de login Admin
+    if (g_admin_token_enabled && verify_admin_credentials(user, pass)) {
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "status", "success");
         cJSON_AddStringToObject(json, "token", g_admin_token);
@@ -63,10 +59,47 @@ void handle_login(struct mg_connection *c, struct mg_http_message *hm) {
         printf("🔓 Login admin réussi pour '%s'\n", user);
         free(json_str);
         cJSON_Delete(json);
-    } else {
-        printf("⚠️  Tentative de login échouée pour '%s'\n", user);
-        mg_http_reply(c, 401, g_cors_headers, "Invalid username or password\n");
+        return;
+    } 
+    
+    // 2. Tentative de login Utilisateur (Client connecté)
+    if (g_user_token_enabled) {
+        int client_idx = -1;
+        // Chercher si l'utilisateur est dans la liste des clients connectés
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (g_client_infos[i].id[0] != '\0' && strcmp(g_client_infos[i].id, user) == 0) {
+                client_idx = i;
+                break;
+            }
+        }
+        
+        if (client_idx != -1) {
+            // Vérifier ou enregistrer l'utilisateur dans la DB persistante
+            if (verify_or_register_user(user, pass)) {
+                // S'assurer qu'il a un token de session
+                if (g_client_infos[client_idx].token[0] == '\0') {
+                    generate_secure_token(g_client_infos[client_idx].token, 64);
+                }
+                
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "status", "success");
+                cJSON_AddStringToObject(json, "token", g_client_infos[client_idx].token);
+                cJSON_AddStringToObject(json, "type", "user");
+                char *json_str = cJSON_Print(json);
+                
+                mg_http_reply(c, 200, "Content-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\n", 
+                              "%s", json_str);
+                
+                printf("🔓 Login utilisateur réussi pour '%s'\n", user);
+                free(json_str);
+                cJSON_Delete(json);
+                return;
+            }
+        }
     }
+
+    printf("⚠️  Tentative de login échouée pour '%s'\n", user);
+    mg_http_reply(c, 401, g_cors_headers, "Invalid username or password\n");
 }
 
 void handle_send(struct mg_connection *c, struct mg_http_message *hm) {

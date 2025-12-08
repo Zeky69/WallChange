@@ -166,6 +166,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     if (g_user_token_enabled) {
         printf("🔐 \033[1;32mTokens Utilisateurs:\033[0m Activés\n");
+        load_user_db();
     }
     if (g_admin_token_enabled) {
         generate_secure_token(g_admin_token, sizeof(g_admin_token));
