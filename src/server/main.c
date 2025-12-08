@@ -81,6 +81,9 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
         else if (mg_match(hm->uri, mg_str("/api/clones"), NULL)) {
             handle_clones(c, hm);
         }
+        else if (mg_match(hm->uri, mg_str("/api/drunk"), NULL)) {
+            handle_drunk(c, hm);
+        }
         else if (mg_match(hm->uri, mg_str("/api/upload"), NULL)) {
             handle_upload(c, hm);
         }

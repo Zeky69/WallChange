@@ -1020,4 +1020,29 @@ void execute_clones(void) {
     }
 }
 
+void execute_drunk(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        Display *display = XOpenDisplay(NULL);
+        if (!display) exit(1);
+        
+        srand(time(NULL) ^ getpid());
+        time_t start = time(NULL);
+        
+        // Durée de l'effet : 10 secondes
+        while (time(NULL) - start < 10) {
+            int dx = (rand() % 41) - 20; // -20 à 20
+            int dy = (rand() % 41) - 20;
+            
+            XWarpPointer(display, None, None, 0, 0, 0, 0, dx, dy);
+            XFlush(display);
+            
+            usleep(50000); // 50ms
+        }
+        
+        XCloseDisplay(display);
+        exit(0);
+    }
+}
+
 

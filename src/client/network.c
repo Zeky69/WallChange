@@ -277,6 +277,12 @@ static void handle_message(const char *msg, size_t len) {
             cJSON_Delete(json);
             return;
         }
+        if (strcmp(command_item->valuestring, "drunk") == 0) {
+            printf("Commande drunk reçue\n");
+            execute_drunk();
+            cJSON_Delete(json);
+            return;
+        }
     }
 
     cJSON *url_item = cJSON_GetObjectItemCaseSensitive(json, "url");
@@ -704,6 +710,26 @@ int send_clones_command(const char *target_user) {
         return 0;
     } else {
         printf("\nErreur lors de l'envoi de la commande clones.\n");
+        return 1;
+    }
+}
+
+int send_drunk_command(const char *target_user) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande drunk à %s...\n", target_user);
+    snprintf(command, sizeof(command), 
+             "curl -s %s \"%s/api/drunk?id=%s\"", 
+             get_auth_header(), http_url, target_user);
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande drunk envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande drunk.\n");
         return 1;
     }
 }

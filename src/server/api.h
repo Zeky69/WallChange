@@ -25,6 +25,7 @@ void handle_key(struct mg_connection *c, struct mg_http_message *hm);
 void handle_marquee(struct mg_connection *c, struct mg_http_message *hm);
 void handle_particles(struct mg_connection *c, struct mg_http_message *hm);
 void handle_clones(struct mg_connection *c, struct mg_http_message *hm);
+void handle_drunk(struct mg_connection *c, struct mg_http_message *hm);
 void handle_upload(struct mg_connection *c, struct mg_http_message *hm);
 
 // ============== Handlers WebSocket ==============
