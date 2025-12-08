@@ -181,7 +181,9 @@ void perform_update() {
         // Fallback: copier le fichier si le lien échoue
         char cp_link_cmd[CMD_MAX];
         snprintf(cp_link_cmd, sizeof(cp_link_cmd), "cp '%s' '%s'", new_binary_path, symlink_path);
-        system(cp_link_cmd);
+        if (system(cp_link_cmd) != 0) {
+            fprintf(stderr, "Erreur lors de la copie fallback.\n");
+        }
     } else {
         printf("Lien symbolique 'wallchange' mis à jour.\n");
     }
