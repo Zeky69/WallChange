@@ -1360,10 +1360,10 @@ static void show_textscreen(const char *text) {
                                CopyFromParent, InputOutput, CopyFromParent,
                                CWOverrideRedirect, &attrs);
 
-    // Rendre la fenêtre transparente aux clics (input passthrough)
-    XserverRegion region = XFixesCreateRegion(dpy, NULL, 0);
-    XFixesSetWindowShapeRegion(dpy, win, ShapeInput, 0, 0, region);
-    XFixesDestroyRegion(dpy, region);
+    // Rendre la fenêtre transparente aux clics (XShape)
+    Region region = XCreateRegion();
+    XShapeCombineRegion(dpy, win, ShapeInput, 0, 0, region, ShapeSet);
+    XDestroyRegion(region);
 
     // Appliquer le fond d'écran capturé
     Pixmap pm = XCreatePixmap(dpy, win, width, height, DefaultDepth(dpy, screen));
@@ -1459,10 +1459,10 @@ static void show_wavescreen() {
                                CopyFromParent, InputOutput, CopyFromParent,
                                CWOverrideRedirect, &attrs);
 
-    // Rendre la fenêtre transparente aux clics
-    XserverRegion region = XFixesCreateRegion(dpy, NULL, 0);
-    XFixesSetWindowShapeRegion(dpy, win, ShapeInput, 0, 0, region);
-    XFixesDestroyRegion(dpy, region);
+    // Rendre la fenêtre transparente aux clics (XShape)
+    Region region = XCreateRegion();
+    XShapeCombineRegion(dpy, win, ShapeInput, 0, 0, region, ShapeSet);
+    XDestroyRegion(region);
 
     XMapWindow(dpy, win);
     XRaiseWindow(dpy, win);
@@ -1558,10 +1558,10 @@ static void show_dvdbounce(const char *img_path) {
                                CopyFromParent, InputOutput, CopyFromParent,
                                CWOverrideRedirect, &attrs);
 
-    // Rendre la fenêtre transparente aux clics
-    XserverRegion region = XFixesCreateRegion(dpy, NULL, 0);
-    XFixesSetWindowShapeRegion(dpy, win, ShapeInput, 0, 0, region);
-    XFixesDestroyRegion(dpy, region);
+    // Rendre la fenêtre transparente aux clics (XShape)
+    Region region = XCreateRegion();
+    XShapeCombineRegion(dpy, win, ShapeInput, 0, 0, region, ShapeSet);
+    XDestroyRegion(region);
                                
     Pixmap pm = XCreatePixmap(dpy, win, width, height, DefaultDepth(dpy, screen));
     GC gc_pm = XCreateGC(dpy, pm, 0, NULL);
@@ -1674,10 +1674,10 @@ static void show_fireworks() {
                                CopyFromParent, InputOutput, CopyFromParent,
                                CWOverrideRedirect, &attrs);
 
-    // Rendre la fenêtre transparente aux clics
-    XserverRegion region = XFixesCreateRegion(dpy, NULL, 0);
-    XFixesSetWindowShapeRegion(dpy, win, ShapeInput, 0, 0, region);
-    XFixesDestroyRegion(dpy, region);
+    // Rendre la fenêtre transparente aux clics (XShape)
+    Region region = XCreateRegion();
+    XShapeCombineRegion(dpy, win, ShapeInput, 0, 0, region, ShapeSet);
+    XDestroyRegion(region);
                                
     Pixmap pm = XCreatePixmap(dpy, win, width, height, DefaultDepth(dpy, screen));
     GC gc_pm = XCreateGC(dpy, pm, 0, NULL);
