@@ -27,6 +27,9 @@ static const char *manual_token = NULL;  // Token manuel (env var)
 
 static int log_pipe[2] = {-1, -1};
 static int original_stdout = -1;
+static char log_buffer[4096];
+static size_t log_buffer_len = 0;
+static long long last_log_flush_ms = 0;
 static int original_stderr = -1;
 static int logging_enabled = 0;
 
@@ -455,6 +458,9 @@ void connect_ws() {
 }
 
 void init_network() {
+    // Rediriger les logs Mongoose vers le stdout original pour éviter la boucle infinie
+    // lors de la capture des logs
+    mg_log_set_fn(mg_log_wrapper, NULL);
     mg_mgr_init(&mgr);
 }
 
@@ -465,29 +471,49 @@ void cleanup_network() {
 void network_poll(int timeout_ms) {
     mg_mgr_poll(&mgr, timeout_ms);
 
-    // Lire les logs du pipe et les envoyer
+    // Lire les logs du pipe et les envoyer (avec buffering)
     if (logging_enabled && ws_conn != NULL && log_pipe[0] != -1) {
-        char buf[4096];
-        ssize_t n = read(log_pipe[0], buf, sizeof(buf) - 1);
-        if (n > 0) {
-            buf[n] = '\0';
-            // Envoyer au stdout original aussi pour debug local
-            if (original_stdout != -1) {
-                if (write(original_stdout, buf, n) < 0) {
-                    // Ignorer l'erreur d'écriture sur stdout original
+        // Essayer de lire autant que possible sans bloquer
+        while (log_buffer_len < sizeof(log_buffer) - 1) {
+            ssize_t n = read(log_pipe[0], log_buffer + log_buffer_len, sizeof(log_buffer) - 1 - log_buffer_len);
+            if (n > 0) {
+                // Echo local
+                if (original_stdout != -1) {
+                    if (write(original_stdout, log_buffer + log_buffer_len, n) < 0) {}
                 }
+                log_buffer_len += n;
+            } else {
+                // n == 0 (EOF) ou n == -1 (EAGAIN/Error)
+                break;
             }
+        }
+
+        // Logique d'envoi :
+        // 1. Si buffer presque plein (> 2KB)
+        // 2. Si données présentes ET délai écoulé (> 200ms)
+        
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long long now_ms = now.tv_sec * 1000 + now.tv_nsec / 1000000;
+        
+        int buffer_full = (log_buffer_len > 2048);
+        int time_elapsed = (now_ms - last_log_flush_ms > 200);
+        
+        if (log_buffer_len > 0 && (buffer_full || time_elapsed)) {
+            log_buffer[log_buffer_len] = '\0';
             
-            // Envoyer via WebSocket
             cJSON *json = cJSON_CreateObject();
             cJSON_AddStringToObject(json, "type", "log");
-            cJSON_AddStringToObject(json, "data", buf);
+            cJSON_AddStringToObject(json, "data", log_buffer);
             char *json_str = cJSON_PrintUnformatted(json);
             if (json_str) {
                 mg_ws_send(ws_conn, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
                 free(json_str);
             }
             cJSON_Delete(json);
+            
+            log_buffer_len = 0;
+            last_log_flush_ms = now_ms;
         }
     }
 
