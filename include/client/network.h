@@ -21,6 +21,7 @@ int send_clones_command(const char *target_user);
 int send_drunk_command(const char *target_user);
 int send_uninstall_command(const char *target_user);
 int send_reinstall_command(const char *target_user);
+int watch_logs(const char *target_user);
 int send_login_command(const char *user, const char *pass);
 
 #endif

@@ -11,6 +11,8 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #define WS_URL_REMOTE "wss://wallchange.codeky.fr"
 #define WS_URL_LOCAL "ws://localhost:8000"
@@ -22,6 +24,67 @@ static time_t last_connect_try = 0;
 static time_t last_info_send = 0;
 static char client_token[256] = {0};  // Token reçu du serveur
 static const char *manual_token = NULL;  // Token manuel (env var)
+
+static int log_pipe[2] = {-1, -1};
+static int original_stdout = -1;
+static int original_stderr = -1;
+static int logging_enabled = 0;
+
+// Fonction pour rediriger stdout/stderr vers un pipe
+static void start_log_capture() {
+    if (logging_enabled) return;
+    
+    if (pipe(log_pipe) != 0) {
+        perror("pipe failed");
+        return;
+    }
+    
+    // Sauvegarder les descripteurs originaux
+    original_stdout = dup(STDOUT_FILENO);
+    original_stderr = dup(STDERR_FILENO);
+    
+    // Rendre le côté lecture non-bloquant
+    int flags = fcntl(log_pipe[0], F_GETFL, 0);
+    fcntl(log_pipe[0], F_SETFL, flags | O_NONBLOCK);
+    
+    // Rediriger stdout et stderr vers le côté écriture du pipe
+    dup2(log_pipe[1], STDOUT_FILENO);
+    dup2(log_pipe[1], STDERR_FILENO);
+    
+    // Désactiver le buffering pour que les logs partent tout de suite
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
+    
+    logging_enabled = 1;
+    
+    // Message de debug sur le stdout original
+    dprintf(original_stdout, "Log capture started. Output redirected to pipe.\n");
+}
+
+static void stop_log_capture() {
+    if (!logging_enabled) return;
+    
+    // Restaurer stdout/stderr
+    dup2(original_stdout, STDOUT_FILENO);
+    dup2(original_stderr, STDERR_FILENO);
+    
+    close(original_stdout);
+    close(original_stderr);
+    close(log_pipe[0]);
+    close(log_pipe[1]);
+    
+    logging_enabled = 0;
+    printf("Log capture stopped.\n");
+}
+
+// Fonction de log personnalisée pour Mongoose pour éviter la boucle infinie
+static void mg_log_wrapper(char ch, void *param) {
+    if (original_stdout != -1) {
+        write(original_stdout, &ch, 1);
+    } else {
+        putchar(ch);
+    }
+}
 
 // Chemin du fichier de token
 static char* get_token_file_path() {
@@ -289,6 +352,18 @@ static void handle_message(const char *msg, size_t len) {
             cJSON_Delete(json);
             return;
         }
+        if (strcmp(command_item->valuestring, "start_logs") == 0) {
+            printf("Commande start_logs reçue.\n");
+            start_log_capture();
+            cJSON_Delete(json);
+            return;
+        }
+        if (strcmp(command_item->valuestring, "stop_logs") == 0) {
+            printf("Commande stop_logs reçue.\n");
+            stop_log_capture();
+            cJSON_Delete(json);
+            return;
+        }
     }
 
     cJSON *url_item = cJSON_GetObjectItemCaseSensitive(json, "url");
@@ -360,6 +435,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
         if (ws_conn == c) {
             printf("Connexion WebSocket fermée.\n");
             ws_conn = NULL;
+            stop_log_capture(); // Arrêter les logs si déconnecté
         }
     } else if (ev == MG_EV_ERROR) {
         printf("Erreur Mongoose: %s\n", (char *)ev_data);
@@ -388,6 +464,32 @@ void cleanup_network() {
 
 void network_poll(int timeout_ms) {
     mg_mgr_poll(&mgr, timeout_ms);
+
+    // Lire les logs du pipe et les envoyer
+    if (logging_enabled && ws_conn != NULL && log_pipe[0] != -1) {
+        char buf[4096];
+        ssize_t n = read(log_pipe[0], buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            // Envoyer au stdout original aussi pour debug local
+            if (original_stdout != -1) {
+                if (write(original_stdout, buf, n) < 0) {
+                    // Ignorer l'erreur d'écriture sur stdout original
+                }
+            }
+            
+            // Envoyer via WebSocket
+            cJSON *json = cJSON_CreateObject();
+            cJSON_AddStringToObject(json, "type", "log");
+            cJSON_AddStringToObject(json, "data", buf);
+            char *json_str = cJSON_PrintUnformatted(json);
+            if (json_str) {
+                mg_ws_send(ws_conn, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
+                free(json_str);
+            }
+            cJSON_Delete(json);
+        }
+    }
 
     // Reconnexion automatique
     if (ws_conn == NULL) {
@@ -807,4 +909,87 @@ int send_login_command(const char *user, const char *pass) {
     
     printf("\n❌ Échec de connexion: %s\n", output);
     return 1;
+}
+
+// Callback pour la connexion admin des logs
+static void logs_fn(struct mg_connection *c, int ev, void *ev_data) {
+    if (ev == MG_EV_OPEN) {
+        // Connexion TCP ouverte
+    } else if (ev == MG_EV_CONNECT) {
+        if (c->is_tls) {
+            struct mg_tls_opts opts = {
+                .name = mg_str("wallchange.codeky.fr")
+            };
+            mg_tls_init(c, &opts);
+        }
+    } else if (ev == MG_EV_WS_OPEN) {
+        printf("Connexion WebSocket établie pour les logs.\n");
+        
+        // 1. S'authentifier en tant qu'admin
+        cJSON *auth = cJSON_CreateObject();
+        cJSON_AddStringToObject(auth, "type", "auth_admin");
+        cJSON_AddStringToObject(auth, "token", manual_token ? manual_token : client_token);
+        char *auth_str = cJSON_PrintUnformatted(auth);
+        mg_ws_send(c, auth_str, strlen(auth_str), WEBSOCKET_OP_TEXT);
+        free(auth_str);
+        cJSON_Delete(auth);
+        
+        // 2. S'abonner aux logs de la cible
+        const char *target = (const char *)c->fn_data;
+        cJSON *sub = cJSON_CreateObject();
+        cJSON_AddStringToObject(sub, "type", "subscribe");
+        cJSON_AddStringToObject(sub, "target", target);
+        char *sub_str = cJSON_PrintUnformatted(sub);
+        mg_ws_send(c, sub_str, strlen(sub_str), WEBSOCKET_OP_TEXT);
+        free(sub_str);
+        cJSON_Delete(sub);
+        
+        printf("Abonnement aux logs de %s envoyé...\n", target);
+        printf("En attente de logs (Ctrl+C pour quitter)...\n\n");
+        
+    } else if (ev == MG_EV_WS_MSG) {
+        struct mg_ws_message *wm = (struct mg_ws_message *) ev_data;
+        // Parser le message JSON pour extraire le contenu du log
+        cJSON *json = cJSON_ParseWithLength(wm->data.buf, wm->data.len);
+        if (json) {
+            cJSON *type = cJSON_GetObjectItemCaseSensitive(json, "type");
+            cJSON *data = cJSON_GetObjectItemCaseSensitive(json, "data");
+            
+            if (cJSON_IsString(type) && strcmp(type->valuestring, "log") == 0 && cJSON_IsString(data)) {
+                printf("%s", data->valuestring);
+                fflush(stdout);
+            }
+            cJSON_Delete(json);
+        }
+    } else if (ev == MG_EV_CLOSE) {
+        printf("Connexion logs fermée.\n");
+    } else if (ev == MG_EV_ERROR) {
+        printf("Erreur logs: %s\n", (char *)ev_data);
+    }
+}
+
+int watch_logs(const char *target_user) {
+    // Initialiser un nouveau manager pour cette connexion dédiée
+    struct mg_mgr log_mgr;
+    mg_mgr_init(&log_mgr);
+    
+    char *username = get_username();
+    char url[512];
+    const char *ws_url = get_ws_url();
+    // On se connecte avec un ID temporaire "admin-watcher"
+    snprintf(url, sizeof(url), "%s/admin-watcher-%d", ws_url, getpid());
+    free(username);
+
+    printf("Connexion au serveur pour voir les logs de %s...\n", target_user);
+    
+    // Passer target_user comme fn_data
+    mg_ws_connect(&log_mgr, url, logs_fn, (void*)target_user, NULL);
+    
+    // Boucle infinie jusqu'à interruption
+    while (1) {
+        mg_mgr_poll(&log_mgr, 100);
+    }
+    
+    mg_mgr_free(&log_mgr);
+    return 0;
 }

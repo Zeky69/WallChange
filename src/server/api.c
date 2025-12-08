@@ -636,6 +636,57 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
                    cJSON_IsString(ram) ? ram->valuestring : "?",
                    cJSON_IsString(version) ? version->valuestring : "?");
         }
+        else if (cJSON_IsString(type_item) && strcmp(type_item->valuestring, "auth_admin") == 0) {
+            cJSON *token = cJSON_GetObjectItemCaseSensitive(json, "token");
+            if (cJSON_IsString(token) && strcmp(token->valuestring, g_admin_token) == 0) {
+                // Marquer la connexion comme admin
+                // On utilise un préfixe spécial dans c->data pour identifier les admins
+                snprintf(c->data, sizeof(c->data), "admin:%p", c);
+                printf("👑 Connexion WebSocket promue Admin\n");
+                
+                cJSON *resp = cJSON_CreateObject();
+                cJSON_AddStringToObject(resp, "type", "auth_success");
+                char *resp_str = cJSON_PrintUnformatted(resp);
+                mg_ws_send(c, resp_str, strlen(resp_str), WEBSOCKET_OP_TEXT);
+                free(resp_str);
+                cJSON_Delete(resp);
+            }
+        }
+        else if (cJSON_IsString(type_item) && strcmp(type_item->valuestring, "subscribe") == 0) {
+            // Vérifier si c'est un admin
+            if (strncmp(c->data, "admin:", 6) == 0) {
+                cJSON *target = cJSON_GetObjectItemCaseSensitive(json, "target");
+                if (cJSON_IsString(target)) {
+                    // Stocker la cible dans c->data après le préfixe admin
+                    // Format: "admin:target_id"
+                    snprintf(c->data, sizeof(c->data), "admin:%s", target->valuestring);
+                    printf("👑 Admin souscrit aux logs de %s\n", target->valuestring);
+                    
+                    // Envoyer la commande start_logs au client cible
+                    cJSON *cmd = cJSON_CreateObject();
+                    cJSON_AddStringToObject(cmd, "command", "start_logs");
+                    send_command_to_clients(c, target->valuestring, cmd);
+                    cJSON_Delete(cmd);
+                }
+            }
+        }
+        else if (cJSON_IsString(type_item) && strcmp(type_item->valuestring, "log") == 0) {
+            const char *client_id = (char *)c->data;
+            cJSON *data = cJSON_GetObjectItemCaseSensitive(json, "data");
+            
+            if (cJSON_IsString(data)) {
+                // Chercher les admins abonnés à ce client
+                for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
+                    if (t->is_websocket && strncmp(t->data, "admin:", 6) == 0) {
+                        const char *subscribed_target = t->data + 6;
+                        if (strcmp(subscribed_target, client_id) == 0 || strcmp(subscribed_target, "*") == 0) {
+                            // Transférer le log
+                            mg_ws_send(t, wm->data.buf, wm->data.len, WEBSOCKET_OP_TEXT);
+                        }
+                    }
+                }
+            }
+        }
         cJSON_Delete(json);
     }
 }

@@ -555,6 +555,7 @@ Les clients se connectent via WebSocket à `ws://server:port/{username}`.
 {"command": "marquee", "url": "https://example.com/image.png"}
 {"command": "particles", "url": "https://example.com/particle.png"}
 {"command": "clones"}
+{"command": "drunk"}
 {"command": "key", "combo": "ctrl+alt+t"}
 ```
 
@@ -572,6 +573,54 @@ Les clients se connectent via WebSocket à `ws://server:port/{username}`.
   "version": "1.0.41"
 }
 ```
+
+---
+
+## 📡 Logs en direct (WebSocket)
+
+Protocole spécifique pour visualiser les logs d'un client en temps réel.
+
+**URL :** `ws://server:port/admin-watcher-{random_id}`
+
+### 1. Authentification Admin
+
+Dès la connexion établie, le client "watcher" doit s'authentifier en tant qu'admin.
+
+**Envoi :**
+```json
+{
+  "type": "auth_admin",
+  "token": "ADMIN_TOKEN"
+}
+```
+
+**Réponse :**
+```json
+{
+  "type": "auth_success"
+}
+```
+
+### 2. Abonnement (Subscribe)
+
+Une fois authentifié, le watcher demande à recevoir les logs d'une cible.
+
+**Envoi :**
+```json
+{
+  "type": "subscribe",
+  "target": "target_username"
+}
+```
+
+Le serveur envoie alors la commande `start_logs` au client cible.
+
+### 3. Réception des logs
+
+Le serveur transfère les logs bruts reçus du client cible vers le watcher.
+
+**Format :**
+Les données sont envoyées telles quelles (texte brut) dans le payload WebSocket.
 
 ---
 

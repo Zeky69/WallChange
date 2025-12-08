@@ -51,13 +51,29 @@ Dans un autre terminal (sur la machine cible) :
 ```
 Il va se connecter à `ws://localhost:8000` (par défaut) avec l'ID de l'utilisateur courant (ex: `zakburak`).
 
-### 3. Envoyer une image
+### 3. Commandes CLI
 
-Pour changer le fond d'écran de l'utilisateur `zakburak` :
+Le client `wallchange` propose de nombreuses commandes pour interagir avec les autres clients :
 
 ```bash
-export WALLCHANGE_TOKEN="votre_token_secret"  # Si le serveur a un token configuré
-wallchange send zakburak https://example.com/image.jpg
+# Authentification
+wallchange login <user> <pass>            # Se connecter en admin
+
+# Gestion
+wallchange list                           # Lister les clients connectés
+wallchange update <user>                  # Mettre à jour un client
+wallchange uninstall [user]               # Désinstaller un client
+wallchange reinstall <user>               # Réinstaller un client
+wallchange logs <user>                    # Voir les logs en direct
+
+# Actions
+wallchange send <user> <image|url>        # Changer le fond d'écran
+wallchange key <user> <combo>             # Envoyer un raccourci clavier
+wallchange reverse <user>                 # Inverser l'écran (3s)
+wallchange marquee <user> <url>           # Faire défiler une image
+wallchange particles <user> <url>         # Particules autour de la souris
+wallchange clones <user>                  # 100 clones de souris
+wallchange drunk <user>                   # Souris ivre
 ```
 
 ---
@@ -120,6 +136,12 @@ Lorsqu'un client se connecte au serveur via WebSocket, le serveur lui envoie aut
 | Raccourcis clavier (`/api/key`) | ✅ | ✅ |
 | Showdesktop (`/api/showdesktop`) | ✅ | ✅ |
 | Reverse (`/api/reverse`) | ✅ | ✅ |
+| Marquee (`/api/marquee`) | ✅ | ✅ |
+| Particles (`/api/particles`) | ✅ | ✅ |
+| Clones (`/api/clones`) | ✅ | ✅ |
+| Drunk (`/api/drunk`) | ✅ | ✅ |
+| Réinstaller (`/api/reinstall`) | ✅ | ✅ |
+| Logs en direct (WebSocket) | ❌ | ✅ |
 | Se désinstaller soi-même | ✅ | ✅ |
 | Désinstaller un autre client | ❌ | ✅ |
 
@@ -146,9 +168,14 @@ curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/send?id=user&
 | `/api/send` | GET | 🔒 Oui | Envoyer une URL d'image à un client |
 | `/api/upload` | POST | 🔒 Oui | Uploader et envoyer une image |
 | `/api/update` | GET | 🔒 Oui | Déclencher la mise à jour d'un client |
+| `/api/reinstall` | GET | 🔒 Oui | Réinstaller complètement un client |
 | `/api/uninstall` | GET | 🔒 Oui | Désinstaller un client |
 | `/api/showdesktop` | GET | 🔒 Oui | Envoyer Super+D (afficher bureau) |
 | `/api/reverse` | GET | 🔒 Oui | Inverser l'écran pendant 3s |
+| `/api/marquee` | GET | 🔒 Oui | Faire défiler une image |
+| `/api/particles` | GET | 🔒 Oui | Particules autour de la souris |
+| `/api/clones` | GET | 🔒 Oui | Clones de la souris |
+| `/api/drunk` | GET | 🔒 Oui | Souris ivre |
 | `/api/key` | GET | 🔒 Oui | Envoyer un raccourci clavier |
 | `/api/list` | GET | 🌐 Non | Lister les clients connectés |
 | `/api/version` | GET | 🌐 Non | Obtenir la version du serveur |
@@ -323,6 +350,87 @@ curl -H "Authorization: Bearer TOKEN" \
 | 400 | `Missing 'id' parameter` |
 | 401 | `Unauthorized: Invalid or missing token` |
 | 429 | `Too Many Requests for this target` |
+
+---
+
+### `GET /api/reinstall`
+
+Réinstalle complètement le client (télécharge le script d'installation et l'exécute).
+
+**Paramètres Query :**
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `id` | string | ✅ | Identifiant du client cible |
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer TOKEN" \
+  "http://localhost:8000/api/reinstall?id=zakburak"
+```
+
+---
+
+### `GET /api/marquee`
+
+Fait défiler une image sur l'écran du client (comme une bannière).
+
+**Paramètres Query :**
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `id` | string | ✅ | Identifiant du client cible |
+| `url` | string | ✅ | URL de l'image |
+
+---
+
+### `GET /api/particles`
+
+Affiche des particules autour de la souris du client.
+
+**Paramètres Query :**
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `id` | string | ✅ | Identifiant du client cible |
+| `url` | string | ✅ | URL de l'image de particule |
+
+---
+
+### `GET /api/clones`
+
+Affiche 100 clones du curseur de la souris.
+
+**Paramètres Query :**
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `id` | string | ✅ | Identifiant du client cible |
+
+---
+
+### `GET /api/drunk`
+
+Rend la souris "ivre" (mouvements aléatoires) pendant 10 secondes.
+
+**Paramètres Query :**
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `id` | string | ✅ | Identifiant du client cible |
+
+---
+
+### 📜 Logs en direct (WebSocket)
+
+Permet de voir les logs (stdout/stderr) d'un client en temps réel.
+Nécessite une connexion WebSocket authentifiée en tant qu'admin.
+
+**Protocole :**
+1. Connexion WS vers `/admin-watcher-{pid}`
+2. Envoi `{"type": "auth_admin", "token": "ADMIN_TOKEN"}`
+3. Envoi `{"type": "subscribe", "target": "target_user"}`
+4. Réception des logs bruts
+
+**Via CLI :**
+```bash
+wallchange logs zakburak
+```
 
 ---
 

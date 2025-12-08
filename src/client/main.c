@@ -26,6 +26,7 @@ static void print_help(const char *prog_name) {
     printf("    \033[1;32mupdate\033[0m <user>                  Mettre à jour un client distant\n");
     printf("    \033[1;32muninstall\033[0m [user]               Désinstaller (soi-même ou autre si admin)\n");
     printf("    \033[1;32mreinstall\033[0m <user>               Réinstaller complètement un client\n");
+    printf("    \033[1;32mlogs\033[0m <user>                    Voir les logs en direct d'un client\n");
     printf("    \033[1;32mkey\033[0m <user> <combo>             Envoyer un raccourci clavier\n");
     printf("    \033[1;32mreverse\033[0m <user>                 Inverser l'écran pendant 3s\n");
     printf("    \033[1;32mmarquee\033[0m <user> <url>           Faire défiler une image\n");
@@ -162,6 +163,10 @@ int main(int argc, char **argv) {
     // Mode commande : réinstaller
     if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "reinstall") == 0) {
         return send_reinstall_command(argv[cmd_idx + 1]);
+    }
+    // Mode commande : logs en direct
+    if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "logs") == 0) {
+        return watch_logs(argv[cmd_idx + 1]);
     }
     // Mode commande : raccourci clavier personnalisé
     if (cmd_idx > 0 && cmd_idx + 2 <= argc - 1 && strcmp(argv[cmd_idx], "key") == 0) {
