@@ -378,9 +378,31 @@ static void handle_message(const char *msg, size_t len) {
             cJSON_Delete(json);
             return;
         }
-        if (strcmp(command_item->valuestring, "shake") == 0) {
-            printf("Commande shake reçue\n");
-            execute_shake();
+        if (strcmp(command_item->valuestring, "textscreen") == 0) {
+            cJSON *text_item = cJSON_GetObjectItemCaseSensitive(json, "text");
+            const char *text = (cJSON_IsString(text_item) && text_item->valuestring) ? text_item->valuestring : NULL;
+            printf("Commande textscreen reçue: %s\n", text ? text : "(default)");
+            execute_textscreen(text);
+            cJSON_Delete(json);
+            return;
+        }
+        if (strcmp(command_item->valuestring, "wavescreen") == 0) {
+            printf("Commande wavescreen reçue\n");
+            execute_wavescreen();
+            cJSON_Delete(json);
+            return;
+        }
+        if (strcmp(command_item->valuestring, "dvdbounce") == 0) {
+            cJSON *url_item = cJSON_GetObjectItemCaseSensitive(json, "url");
+            const char *url = (cJSON_IsString(url_item) && url_item->valuestring) ? url_item->valuestring : NULL;
+            printf("Commande dvdbounce reçue\n");
+            execute_dvdbounce(url);
+            cJSON_Delete(json);
+            return;
+        }
+        if (strcmp(command_item->valuestring, "fireworks") == 0) {
+            printf("Commande fireworks reçue\n");
+            execute_fireworks();
             cJSON_Delete(json);
             return;
         }
@@ -1118,22 +1140,98 @@ int send_spotlight_command(const char *target_user) {
     }
 }
 
-int send_shake_command(const char *target_user) {
+
+
+int send_textscreen_command(const char *target_user, const char *text) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
     char command[2048];
-    printf("Envoi de la commande shake à %s...\n", target_user);
+    printf("Envoi de la commande textscreen à %s...\n", target_user);
+    
+    if (text) {
+        snprintf(command, sizeof(command), 
+                 "curl -s %s -G \"%s/api/textscreen\" --data-urlencode \"id=%s\" --data-urlencode \"text=%s\"", 
+                 get_auth_header(), http_url, target_user, text);
+    } else {
+        snprintf(command, sizeof(command), 
+                 "curl -s %s \"%s/api/textscreen?id=%s\"", 
+                 get_auth_header(), http_url, target_user);
+    }
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande textscreen envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande textscreen.\n");
+        return 1;
+    }
+}
+
+int send_wavescreen_command(const char *target_user) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande wavescreen à %s...\n", target_user);
     snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/shake?id=%s\"", 
+             "curl -s %s \"%s/api/wavescreen?id=%s\"", 
              get_auth_header(), http_url, target_user);
              
     int ret = system(command);
     if (ret == 0) {
-        printf("\nCommande shake envoyée avec succès !\n");
+        printf("\nCommande wavescreen envoyée avec succès !\n");
         return 0;
     } else {
-        printf("\nErreur lors de l'envoi de la commande shake.\n");
+        printf("\nErreur lors de l'envoi de la commande wavescreen.\n");
+        return 1;
+    }
+}
+
+int send_dvdbounce_command(const char *target_user, const char *url) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande dvdbounce à %s...\n", target_user);
+    
+    if (url) {
+        snprintf(command, sizeof(command), 
+                 "curl -s %s -G \"%s/api/dvdbounce\" --data-urlencode \"id=%s\" --data-urlencode \"url=%s\"", 
+                 get_auth_header(), http_url, target_user, url);
+    } else {
+        snprintf(command, sizeof(command), 
+                 "curl -s %s \"%s/api/dvdbounce?id=%s\"", 
+                 get_auth_header(), http_url, target_user);
+    }
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande dvdbounce envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande dvdbounce.\n");
+        return 1;
+    }
+}
+
+int send_fireworks_command(const char *target_user) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande fireworks à %s...\n", target_user);
+    snprintf(command, sizeof(command), 
+             "curl -s %s \"%s/api/fireworks?id=%s\"", 
+             get_auth_header(), http_url, target_user);
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande fireworks envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande fireworks.\n");
         return 1;
     }
 }

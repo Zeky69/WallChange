@@ -15,7 +15,10 @@ void execute_drunk(void);
 void execute_faketerminal(void);
 void execute_confetti(const char *url);
 void execute_spotlight(void);
-void execute_shake(void);
+void execute_textscreen(const char *text);
+void execute_wavescreen(void);
+void execute_dvdbounce(const char *url);
+void execute_fireworks(void);
 
 #endif
 

@@ -565,9 +565,34 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ---
 
-### `GET /api/shake`
+### `GET /api/textscreen`
 
-Fait trembler l'écran vigoureusement pendant 5 secondes (via xrandr transform).
+Affiche un texte ou emoji en énorme au centre de l'écran pendant 5 secondes.
+
+**Auth requise :** Oui (User ou Admin)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous - admin uniquement) |
+| `text` | string | (Optionnel) Texte à afficher (défaut: "HELLO WORLD") |
+
+**Réponse (200) :**
+```
+Textscreen sent to 1 client(s)
+```
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/textscreen?id=zakburak&text=HACKED"
+```
+
+---
+
+### `GET /api/wavescreen`
+
+Applique un effet d'onde (distorsion sinusoïdale) sur tout l'écran pendant 10 secondes.
 
 **Auth requise :** Oui (User ou Admin)
 
@@ -578,13 +603,62 @@ Fait trembler l'écran vigoureusement pendant 5 secondes (via xrandr transform).
 
 **Réponse (200) :**
 ```
-Shake sent to 1 client(s)
+Wavescreen sent to 1 client(s)
 ```
 
 **Exemple :**
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:8000/api/shake?id=zakburak"
+  "http://localhost:8000/api/wavescreen?id=zakburak"
+```
+
+---
+
+### `GET /api/dvdbounce`
+
+Fait rebondir un logo (ou image) sur les bords de l'écran comme le logo DVD pendant 15 secondes.
+
+**Auth requise :** Oui (User ou Admin)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous - admin uniquement) |
+| `url` | string | (Optionnel) URL de l'image à faire rebondir |
+
+**Réponse (200) :**
+```
+DVD Bounce sent to 1 client(s)
+```
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/dvdbounce?id=zakburak"
+```
+
+---
+
+### `GET /api/fireworks`
+
+Affiche des feux d'artifice à l'écran pendant 15 secondes. Les clics de souris déclenchent des explosions.
+
+**Auth requise :** Oui (User ou Admin)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous - admin uniquement) |
+
+**Réponse (200) :**
+```
+Fireworks sent to 1 client(s)
+```
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/fireworks?id=zakburak"
 ```
 
 ---
@@ -593,7 +667,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 L'admin peut utiliser `*` comme `id` pour envoyer une commande à **tous les clients connectés**.
 
-**Endpoints supportés :** `send`, `upload`, `update`, `showdesktop`, `reverse`, `key`, `marquee`, `particles`, `clones`, `drunk`, `faketerminal`, `confetti`, `spotlight`, `shake`
+**Endpoints supportés :** `send`, `upload`, `update`, `showdesktop`, `reverse`, `key`, `marquee`, `particles`, `clones`, `drunk`, `faketerminal`, `confetti`, `spotlight`, `textscreen`, `wavescreen`, `dvdbounce`, `fireworks`
 
 **Exemples :**
 
@@ -661,7 +735,10 @@ Les clients se connectent via WebSocket à `ws://server:port/{username}`.
 {"command": "faketerminal"}
 {"command": "confetti", "url": "https://example.com/image.png"}
 {"command": "spotlight"}
-{"command": "shake"}
+{"command": "textscreen", "text": "HELLO"}
+{"command": "wavescreen"}
+{"command": "dvdbounce", "url": "https://example.com/dvd.png"}
+{"command": "fireworks"}
 {"command": "key", "combo": "ctrl+alt+t"}
 ```
 

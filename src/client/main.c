@@ -205,9 +205,23 @@ int main(int argc, char **argv) {
     if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "spotlight") == 0) {
         return send_spotlight_command(argv[cmd_idx + 1]);
     }
-    // Mode commande : shake
-    if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "shake") == 0) {
-        return send_shake_command(argv[cmd_idx + 1]);
+    // Mode commande : textscreen
+    if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "textscreen") == 0) {
+        const char *text = (cmd_idx + 2 <= argc - 1) ? argv[cmd_idx + 2] : NULL;
+        return send_textscreen_command(argv[cmd_idx + 1], text);
+    }
+    // Mode commande : wavescreen
+    if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "wavescreen") == 0) {
+        return send_wavescreen_command(argv[cmd_idx + 1]);
+    }
+    // Mode commande : dvdbounce
+    if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "dvdbounce") == 0) {
+        const char *url = (cmd_idx + 2 <= argc - 1) ? argv[cmd_idx + 2] : NULL;
+        return send_dvdbounce_command(argv[cmd_idx + 1], url);
+    }
+    // Mode commande : fireworks
+    if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "fireworks") == 0) {
+        return send_fireworks_command(argv[cmd_idx + 1]);
     }
     // Mode commande : lister les clients
     if (cmd_idx > 0 && strcmp(argv[cmd_idx], "list") == 0) {

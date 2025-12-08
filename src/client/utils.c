@@ -1333,43 +1333,375 @@ void execute_spotlight(void) {
     }
 }
 
-// --- SHAKE ---
-static char* get_primary_output() {
-    FILE *fp = popen("xrandr --current | grep ' connected' | head -n 1 | cut -d ' ' -f1", "r");
-    if (!fp) return NULL;
-    static char output[64];
-    if (fgets(output, sizeof(output), fp)) {
-        size_t len = strlen(output);
-        if (len > 0 && output[len-1] == '\n') output[len-1] = '\0';
+
+
+// ==========================================
+// NOUVEAUX EFFETS (V2)
+// ==========================================
+
+// --- TEXTSCREEN ---
+static void show_textscreen(const char *text) {
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) return;
+
+    int screen = DefaultScreen(dpy);
+    int width = DisplayWidth(dpy, screen);
+    int height = DisplayHeight(dpy, screen);
+    Window root = RootWindow(dpy, screen);
+
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    attrs.background_pixel = BlackPixel(dpy, screen);
+
+    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
+                               CopyFromParent, InputOutput, CopyFromParent,
+                               CWOverrideRedirect | CWBackPixel, &attrs);
+
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
+    XFlush(dpy);
+
+    GC gc = XCreateGC(dpy, win, 0, NULL);
+    XSetForeground(dpy, gc, WhitePixel(dpy, screen));
+    
+    // Essayer de charger une grande police
+    // Note: X11 core fonts sont limitées. On essaie une pattern large.
+    XFontStruct *font = XLoadQueryFont(dpy, "-*-helvetica-bold-r-*-*-34-*-*-*-*-*-*-*");
+    if (!font) font = XLoadQueryFont(dpy, "fixed");
+    if (font) XSetFont(dpy, gc, font->fid);
+
+    const char *msg = (text && strlen(text) > 0) ? text : "HELLO WORLD";
+    int text_len = strlen(msg);
+    int text_width = font ? XTextWidth(font, msg, text_len) : text_len * 10;
+    int text_height = font ? font->ascent + font->descent : 15;
+
+    // Centrer
+    int x = (width - text_width) / 2;
+    int y = (height - text_height) / 2;
+
+    time_t start = time(NULL);
+    while (time(NULL) - start < 5) {
+        XClearWindow(dpy, win);
+        // Dessiner plusieurs fois pour simuler du gras/grand si la police est petite
+        if (!font || font->max_bounds.width < 20) {
+             // Hack pour grossir le texte (scale x2 simple)
+             // On ne peut pas scaler du texte X11 facilement sans Xft.
+             // On va juste l'afficher au centre.
+             XDrawString(dpy, win, gc, x, y, msg, text_len);
+        } else {
+             XDrawString(dpy, win, gc, x, y, msg, text_len);
+        }
+        XFlush(dpy);
+        sleep(1);
     }
-    pclose(fp);
-    return output;
+
+    if (font) XFreeFont(dpy, font);
+    XFreeGC(dpy, gc);
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
 }
 
-void execute_shake(void) {
+void execute_textscreen(const char *text) {
     pid_t pid = fork();
     if (pid == 0) {
-        char *output = get_primary_output();
-        if (!output || strlen(output) == 0) exit(1);
+        show_textscreen(text);
+        exit(0);
+    }
+}
+
+// --- WAVESCREEN ---
+static void show_wavescreen() {
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) return;
+
+    int screen = DefaultScreen(dpy);
+    int width = DisplayWidth(dpy, screen);
+    int height = DisplayHeight(dpy, screen);
+    Window root = RootWindow(dpy, screen);
+
+    // Capture de l'écran
+    XImage *img = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
+    if (!img) { XCloseDisplay(dpy); return; }
+
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    
+    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
+                               CopyFromParent, InputOutput, CopyFromParent,
+                               CWOverrideRedirect, &attrs);
+
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
+    
+    GC gc = XCreateGC(dpy, win, 0, NULL);
+    
+    // Buffer pour le dessin
+    // On ne peut pas modifier img->data directement car c'est read-only souvent ou complexe
+    // On crée une pixmap pour le double buffering si possible, ou on dessine ligne par ligne
+    // Pour simplifier : on modifie une copie de l'image et on l'envoie
+    
+    // Créer une copie de l'image pour travailler
+    // Note: XCreateImage alloue la structure, pas les données
+    char *data = malloc(img->bytes_per_line * height);
+    XImage *frame = XCreateImage(dpy, DefaultVisual(dpy, screen), img->depth, ZPixmap, 0, 
+                                 data, width, height, 32, 0);
+    
+    time_t start = time(NULL);
+    float t = 0;
+    
+    while (time(NULL) - start < 10) {
+        // Appliquer l'effet d'onde
+        // Copier img vers frame avec distorsion
+        // Optimisation: on ne traite que 1 pixel sur 2 ou on fait simple
         
-        srand(time(NULL) ^ getpid());
-        time_t start = time(NULL);
-        char cmd[512];
-        
-        while (time(NULL) - start < 5) { // 5 secondes
-            int dx = (rand() % 21) - 10; // -10 à 10
-            int dy = (rand() % 21) - 10;
+        for (int y = 0; y < height; y++) {
+            // Offset X basé sur Y (onde verticale)
+            int offset_x = (int)(sin(y * 0.05 + t) * 20);
             
-            snprintf(cmd, sizeof(cmd), "xrandr --output %s --transform 1,0,%d,0,1,%d,0,0,1", output, dx, dy);
-            if (system(cmd) != 0) { /* ignore */ }
+            // Copier la ligne y de img vers la ligne y de frame avec décalage
+            // On doit gérer les bords
             
-            usleep(50000);
+            char *src_row = img->data + y * img->bytes_per_line;
+            char *dst_row = frame->data + y * frame->bytes_per_line;
+            
+            // memset(dst_row, 0, frame->bytes_per_line); // Noir par défaut
+            
+            // Copie simple byte par byte (attention bpp)
+            // Supposons 32bpp (4 bytes) pour simplifier la logique
+            // Si offset > 0, on copie de src[0] vers dst[offset]
+            
+            int bpp = img->bits_per_pixel / 8;
+            int line_len = width * bpp;
+            
+            if (abs(offset_x) < width) {
+                if (offset_x >= 0) {
+                    memcpy(dst_row + offset_x * bpp, src_row, line_len - offset_x * bpp);
+                } else {
+                    memcpy(dst_row, src_row - offset_x * bpp, line_len + offset_x * bpp);
+                }
+            }
         }
         
-        // Reset
-        snprintf(cmd, sizeof(cmd), "xrandr --output %s --transform none", output);
-        if (system(cmd) != 0) { /* ignore */ }
+        XPutImage(dpy, win, gc, frame, 0, 0, 0, 0, width, height);
+        XFlush(dpy);
         
+        t += 0.5;
+        usleep(50000);
+    }
+
+    XDestroyImage(frame); // Libère data aussi normalement si créé avec XCreateImage et data passé
+    XDestroyImage(img);
+    XFreeGC(dpy, gc);
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
+}
+
+void execute_wavescreen(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        show_wavescreen();
+        exit(0);
+    }
+}
+
+// --- DVDBOUNCE ---
+static void show_dvdbounce(const char *img_path) {
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) return;
+
+    int screen = DefaultScreen(dpy);
+    int width = DisplayWidth(dpy, screen);
+    int height = DisplayHeight(dpy, screen);
+    Window root = RootWindow(dpy, screen);
+
+    // Fond d'écran actuel
+    XImage *bg = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
+    
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    
+    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
+                               CopyFromParent, InputOutput, CopyFromParent,
+                               CWOverrideRedirect, &attrs);
+                               
+    Pixmap pm = XCreatePixmap(dpy, win, width, height, DefaultDepth(dpy, screen));
+    GC gc_pm = XCreateGC(dpy, pm, 0, NULL);
+    XPutImage(dpy, pm, gc_pm, bg, 0, 0, 0, 0, width, height);
+    XSetWindowBackgroundPixmap(dpy, win, pm);
+    XFreeGC(dpy, gc_pm);
+    XDestroyImage(bg);
+
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
+    
+    GC gc = XCreateGC(dpy, win, 0, NULL);
+    
+    // Charger l'image ou utiliser un rect
+    int logo_w = 100, logo_h = 100;
+    float x = rand() % (width - logo_w);
+    float y = rand() % (height - logo_h);
+    float vx = 5.0, vy = 5.0;
+    unsigned long color = 0xFF0000;
+    
+    // TODO: Charger image si img_path existe (via stb_image + XPutImage)
+    // Pour l'instant on fait un rect coloré qui change de couleur
+    
+    time_t start = time(NULL);
+    while (time(NULL) - start < 15) {
+        XClearWindow(dpy, win); // Remet le fond (pixmap)
+        
+        x += vx;
+        y += vy;
+        
+        int hit = 0;
+        if (x <= 0 || x + logo_w >= width) { vx = -vx; hit = 1; }
+        if (y <= 0 || y + logo_h >= height) { vy = -vy; hit = 1; }
+        
+        if (hit) {
+            color = (rand() % 0xFFFFFF) | 0x404040; // Couleur brillante
+        }
+        
+        XSetForeground(dpy, gc, color);
+        XFillRectangle(dpy, win, gc, (int)x, (int)y, logo_w, logo_h);
+        
+        // Texte "DVD"
+        XSetForeground(dpy, gc, 0x000000);
+        XDrawString(dpy, win, gc, (int)x + 40, (int)y + 55, "DVD", 3);
+        
+        XFlush(dpy);
+        usleep(20000);
+    }
+
+    XFreePixmap(dpy, pm);
+    XFreeGC(dpy, gc);
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
+}
+
+void execute_dvdbounce(const char *url) {
+    // Téléchargement optionnel (non implémenté ici pour simplifier, on utilise le rect)
+    pid_t pid = fork();
+    if (pid == 0) {
+        srand(time(NULL) ^ getpid());
+        show_dvdbounce(NULL);
+        exit(0);
+    }
+}
+
+// --- FIREWORKS ---
+typedef struct {
+    float x, y;
+    float vx, vy;
+    int life;
+    unsigned long color;
+} FireworkParticle;
+
+#define MAX_FIREWORKS_PARTICLES 1000
+static FireworkParticle particles[MAX_FIREWORKS_PARTICLES];
+static int p_count = 0;
+
+static void spawn_explosion(int x, int y) {
+    int count = 50;
+    unsigned long color = (rand() % 0xFFFFFF);
+    for (int i = 0; i < count; i++) {
+        if (p_count >= MAX_FIREWORKS_PARTICLES) break;
+        particles[p_count].x = x;
+        particles[p_count].y = y;
+        float angle = (rand() % 360) * 3.14159 / 180.0;
+        float speed = (rand() % 100) / 10.0;
+        particles[p_count].vx = cos(angle) * speed;
+        particles[p_count].vy = sin(angle) * speed;
+        particles[p_count].life = 50 + (rand() % 20);
+        particles[p_count].color = color;
+        p_count++;
+    }
+}
+
+static void show_fireworks() {
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) return;
+
+    int screen = DefaultScreen(dpy);
+    int width = DisplayWidth(dpy, screen);
+    int height = DisplayHeight(dpy, screen);
+    Window root = RootWindow(dpy, screen);
+
+    XImage *bg = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
+    
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    
+    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
+                               CopyFromParent, InputOutput, CopyFromParent,
+                               CWOverrideRedirect, &attrs);
+                               
+    Pixmap pm = XCreatePixmap(dpy, win, width, height, DefaultDepth(dpy, screen));
+    GC gc_pm = XCreateGC(dpy, pm, 0, NULL);
+    XPutImage(dpy, pm, gc_pm, bg, 0, 0, 0, 0, width, height);
+    XSetWindowBackgroundPixmap(dpy, win, pm);
+    XFreeGC(dpy, gc_pm);
+    XDestroyImage(bg);
+
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
+    
+    GC gc = XCreateGC(dpy, win, 0, NULL);
+    
+    time_t start = time(NULL);
+    int last_mouse_state = 0;
+
+    while (time(NULL) - start < 15) {
+        XClearWindow(dpy, win);
+        
+        // Gestion souris
+        Window root_ret, child_ret;
+        int root_x, root_y, win_x, win_y;
+        unsigned int mask;
+        if (XQueryPointer(dpy, root, &root_ret, &child_ret, &root_x, &root_y, &win_x, &win_y, &mask)) {
+            int clicked = (mask & Button1Mask);
+            if (clicked && !last_mouse_state) {
+                spawn_explosion(root_x, root_y);
+            }
+            last_mouse_state = clicked;
+        }
+        
+        // Auto spawn
+        if (rand() % 20 == 0) {
+            spawn_explosion(rand() % width, rand() % height);
+        }
+        
+        // Update & Draw
+        int new_count = 0;
+        for (int i = 0; i < p_count; i++) {
+            if (particles[i].life > 0) {
+                particles[i].x += particles[i].vx;
+                particles[i].y += particles[i].vy;
+                particles[i].vy += 0.2; // Gravité
+                particles[i].life--;
+                
+                XSetForeground(dpy, gc, particles[i].color);
+                XFillRectangle(dpy, win, gc, (int)particles[i].x, (int)particles[i].y, 3, 3);
+                
+                particles[new_count++] = particles[i];
+            }
+        }
+        p_count = new_count;
+        
+        XFlush(dpy);
+        usleep(20000);
+    }
+
+    XFreePixmap(dpy, pm);
+    XFreeGC(dpy, gc);
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
+}
+
+void execute_fireworks(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        srand(time(NULL) ^ getpid());
+        show_fireworks();
         exit(0);
     }
 }

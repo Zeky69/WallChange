@@ -26,6 +26,9 @@ int send_login_command(const char *user, const char *pass);
 int send_faketerminal_command(const char *target_user);
 int send_confetti_command(const char *target_user, const char *url);
 int send_spotlight_command(const char *target_user);
-int send_shake_command(const char *target_user);
+int send_textscreen_command(const char *target_user, const char *text);
+int send_wavescreen_command(const char *target_user);
+int send_dvdbounce_command(const char *target_user, const char *url);
+int send_fireworks_command(const char *target_user);
 
 #endif

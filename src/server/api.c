@@ -584,37 +584,6 @@ void handle_spotlight(struct mg_connection *c, struct mg_http_message *hm) {
     }
 }
 
-void handle_shake(struct mg_connection *c, struct mg_http_message *hm) {
-    if (!validate_bearer_token(hm)) {
-        mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
-        return;
-    }
-    
-    char target_id[32];
-    get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
-
-    if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
-        mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required for wildcard\n");
-        return;
-    }
-
-    if (strlen(target_id) > 0) {
-        if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
-            mg_http_reply(c, 429, g_cors_headers, "Too Many Requests for this target\n");
-            return;
-        }
-
-        cJSON *json = cJSON_CreateObject();
-        cJSON_AddStringToObject(json, "command", "shake");
-        int found = send_command_to_clients(c, target_id, json);
-        cJSON_Delete(json);
-
-        mg_http_reply(c, 200, g_cors_headers, "Shake sent to %d client(s)\n", found);
-    } else {
-        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
-    }
-}
-
 void handle_reinstall(struct mg_connection *c, struct mg_http_message *hm) {
     if (!validate_bearer_token(hm)) {
         mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
@@ -830,4 +799,138 @@ void handle_ws_close(struct mg_connection *c) {
     const char *client_id = (char *)c->data;
     printf("Client déconnecté: %s\n", client_id);
     remove_client(client_id);
+}
+
+void handle_textscreen(struct mg_connection *c, struct mg_http_message *hm) {
+    if (!validate_bearer_token(hm)) {
+        mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
+        return;
+    }
+    
+    char target_id[32];
+    char text[256];
+    get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+    get_qs_var(&hm->query, "text", text, sizeof(text));
+
+    if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+        mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required for wildcard\n");
+        return;
+    }
+
+    if (strlen(target_id) > 0) {
+        if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
+            mg_http_reply(c, 429, g_cors_headers, "Too Many Requests for this target\n");
+            return;
+        }
+
+        cJSON *json = cJSON_CreateObject();
+        cJSON_AddStringToObject(json, "command", "textscreen");
+        if (strlen(text) > 0) {
+            cJSON_AddStringToObject(json, "text", text);
+        }
+        int found = send_command_to_clients(c, target_id, json);
+        cJSON_Delete(json);
+
+        mg_http_reply(c, 200, g_cors_headers, "Textscreen sent to %d client(s)\n", found);
+    } else {
+        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
+    }
+}
+
+void handle_wavescreen(struct mg_connection *c, struct mg_http_message *hm) {
+    if (!validate_bearer_token(hm)) {
+        mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
+        return;
+    }
+    
+    char target_id[32];
+    get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+
+    if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+        mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required for wildcard\n");
+        return;
+    }
+
+    if (strlen(target_id) > 0) {
+        if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
+            mg_http_reply(c, 429, g_cors_headers, "Too Many Requests for this target\n");
+            return;
+        }
+
+        cJSON *json = cJSON_CreateObject();
+        cJSON_AddStringToObject(json, "command", "wavescreen");
+        int found = send_command_to_clients(c, target_id, json);
+        cJSON_Delete(json);
+
+        mg_http_reply(c, 200, g_cors_headers, "Wavescreen sent to %d client(s)\n", found);
+    } else {
+        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
+    }
+}
+
+void handle_dvdbounce(struct mg_connection *c, struct mg_http_message *hm) {
+    if (!validate_bearer_token(hm)) {
+        mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
+        return;
+    }
+    
+    char target_id[32];
+    char url[512];
+    get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+    get_qs_var(&hm->query, "url", url, sizeof(url));
+
+    if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+        mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required for wildcard\n");
+        return;
+    }
+
+    if (strlen(target_id) > 0) {
+        if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
+            mg_http_reply(c, 429, g_cors_headers, "Too Many Requests for this target\n");
+            return;
+        }
+
+        cJSON *json = cJSON_CreateObject();
+        cJSON_AddStringToObject(json, "command", "dvdbounce");
+        if (strlen(url) > 0) {
+            cJSON_AddStringToObject(json, "url", url);
+        }
+        int found = send_command_to_clients(c, target_id, json);
+        cJSON_Delete(json);
+
+        mg_http_reply(c, 200, g_cors_headers, "DVD Bounce sent to %d client(s)\n", found);
+    } else {
+        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
+    }
+}
+
+void handle_fireworks(struct mg_connection *c, struct mg_http_message *hm) {
+    if (!validate_bearer_token(hm)) {
+        mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
+        return;
+    }
+    
+    char target_id[32];
+    get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+
+    if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+        mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required for wildcard\n");
+        return;
+    }
+
+    if (strlen(target_id) > 0) {
+        if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
+            mg_http_reply(c, 429, g_cors_headers, "Too Many Requests for this target\n");
+            return;
+        }
+
+        cJSON *json = cJSON_CreateObject();
+        cJSON_AddStringToObject(json, "command", "fireworks");
+        int found = send_command_to_clients(c, target_id, json);
+        cJSON_Delete(json);
+
+        mg_http_reply(c, 200, g_cors_headers, "Fireworks sent to %d client(s)\n", found);
+    } else {
+        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
+    }
 }

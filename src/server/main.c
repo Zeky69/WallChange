@@ -93,8 +93,17 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
         else if (mg_match(hm->uri, mg_str("/api/spotlight"), NULL)) {
             handle_spotlight(c, hm);
         }
-        else if (mg_match(hm->uri, mg_str("/api/shake"), NULL)) {
-            handle_shake(c, hm);
+        else if (mg_match(hm->uri, mg_str("/api/textscreen"), NULL)) {
+            handle_textscreen(c, hm);
+        }
+        else if (mg_match(hm->uri, mg_str("/api/wavescreen"), NULL)) {
+            handle_wavescreen(c, hm);
+        }
+        else if (mg_match(hm->uri, mg_str("/api/dvdbounce"), NULL)) {
+            handle_dvdbounce(c, hm);
+        }
+        else if (mg_match(hm->uri, mg_str("/api/fireworks"), NULL)) {
+            handle_fireworks(c, hm);
         }
         else if (mg_match(hm->uri, mg_str("/api/reinstall"), NULL)) {
             handle_reinstall(c, hm);
