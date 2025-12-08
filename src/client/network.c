@@ -83,7 +83,9 @@ static void stop_log_capture() {
 // Fonction de log personnalisée pour Mongoose pour éviter la boucle infinie
 static void mg_log_wrapper(char ch, void *param) {
     if (original_stdout != -1) {
-        write(original_stdout, &ch, 1);
+        if (write(original_stdout, &ch, 1) < 0) {
+            // Ignorer l'erreur d'écriture
+        }
     } else {
         putchar(ch);
     }
@@ -490,16 +492,18 @@ void network_poll(int timeout_ms) {
 
         // Logique d'envoi :
         // 1. Si buffer presque plein (> 2KB)
-        // 2. Si données présentes ET délai écoulé (> 200ms)
+        // 2. Si données présentes ET délai écoulé (> 50ms) - Réduit pour plus de réactivité
+        // 3. Si un saut de ligne est détecté (comportement terminal)
         
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
         long long now_ms = now.tv_sec * 1000 + now.tv_nsec / 1000000;
         
         int buffer_full = (log_buffer_len > 2048);
-        int time_elapsed = (now_ms - last_log_flush_ms > 200);
+        int time_elapsed = (now_ms - last_log_flush_ms > 50);
+        int has_newline = (memchr(log_buffer, '\n', log_buffer_len) != NULL);
         
-        if (log_buffer_len > 0 && (buffer_full || time_elapsed)) {
+        if (log_buffer_len > 0 && (buffer_full || time_elapsed || has_newline)) {
             log_buffer[log_buffer_len] = '\0';
             
             cJSON *json = cJSON_CreateObject();
