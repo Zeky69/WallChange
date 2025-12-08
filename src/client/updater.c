@@ -28,8 +28,6 @@ void perform_update() {
         return;
     }
 
-    // Se placer dans un répertoire sûr pour éviter les erreurs "getcwd() failed"
-    // si le dossier courant a été supprimé
     if (chdir(home) == 0) {
         setenv("PWD", home, 1);
         printf("Répertoire de travail changé vers: %s\n", home);
