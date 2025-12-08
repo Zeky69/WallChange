@@ -1,6 +1,7 @@
 #include "api.h"
 #include "auth.h"
 #include "clients.h"
+#include "common/image_utils.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -467,8 +468,15 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
             if (fp) {
                 fwrite(part.body.buf, 1, part.body.len, fp);
                 fclose(fp);
-                printf("Fichier uploadé: %s\n", saved_path);
-                uploaded = 1;
+                
+                // Vérification de l'image
+                if (is_valid_image(saved_path)) {
+                    printf("✅ Image valide reçue: %s\n", saved_path);
+                    uploaded = 1;
+                } else {
+                    printf("❌ Fichier invalide (pas une image supportée): %s\n", saved_path);
+                    remove(saved_path); // Supprimer le fichier invalide
+                }
             }
         }
     }

@@ -5,3 +5,4 @@ uploads/
 /server
 
 .wallchange_token
+.admin_credentials

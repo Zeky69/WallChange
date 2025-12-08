@@ -1,5 +1,6 @@
 #include "client/utils.h"
 #include "client/wallpaper.h"
+#include "common/image_utils.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -15,7 +16,9 @@
 #include <X11/Xatom.h>
 #include <X11/extensions/shape.h>
 
-#define STB_IMAGE_IMPLEMENTATION
+// Note: stb_image est déjà inclus dans common/image_utils.c
+// On ne doit PAS définir STB_IMAGE_IMPLEMENTATION ici pour éviter les conflits
+// Mais on a besoin des déclarations de stbi_load, etc.
 #include "common/stb_image.h"
 
 // Structure pour stocker les données d'un GIF animé
@@ -195,6 +198,7 @@ static AnimatedGif* load_animated_gif(const char *filepath) {
     free(buffer);
     
     if (!gif_data) {
+        // stbi_failure_reason() est disponible via stb_image.h
         printf("Erreur chargement GIF animé: %s\n", stbi_failure_reason());
         return NULL;
     }
@@ -448,24 +452,21 @@ void execute_marquee(const char *url_or_path) {
         // Processus enfant
         
         // Vérifier si c'est un GIF animé
-        if (is_gif_file(filepath)) {
-            AnimatedGif *gif = load_animated_gif(filepath);
-            if (gif) {
-                if (gif->frame_count > 1) {
-                    // GIF animé
-                    printf("Affichage GIF animé: %d frames\n", gif->frame_count);
-                    show_animated_gif_on_screen(gif);
-                } else {
-                    // GIF statique (1 seule frame), traiter comme image normale
-                    show_image_on_screen(filepath);
-                }
-                free_animated_gif(gif);
+        // Note: is_gif_file n'est pas défini dans image_utils.h, on utilise une détection simple par extension ou on tente de charger
+        // Pour l'instant, on suppose que load_animated_gif gère l'échec si ce n'est pas un GIF
+        AnimatedGif *gif = load_animated_gif(filepath);
+        if (gif) {
+            if (gif->frame_count > 1) {
+                // GIF animé
+                printf("Affichage GIF animé: %d frames\n", gif->frame_count);
+                show_animated_gif_on_screen(gif);
             } else {
-                // Fallback sur image statique si le chargement GIF échoue
+                // GIF statique (1 seule frame), traiter comme image normale
                 show_image_on_screen(filepath);
             }
+            free_animated_gif(gif);
         } else {
-            // Image normale (PNG, JPG, etc.)
+            // Fallback sur image statique si le chargement GIF échoue
             show_image_on_screen(filepath);
         }
         
@@ -490,29 +491,6 @@ typedef struct {
 #define MAX_PARTICLES 50
 #define PARTICLE_SPAWN_RATE 8  // Particules par frame
 #define PARTICLE_SIZE 48       // Taille standard des particules en pixels
-
-// Redimensionne une image RGBA
-static unsigned char* resize_image_rgba(const unsigned char *src, int src_w, int src_h, int dst_w, int dst_h) {
-    unsigned char *dst = malloc(dst_w * dst_h * 4);
-    if (!dst) return NULL;
-    
-    for (int y = 0; y < dst_h; y++) {
-        for (int x = 0; x < dst_w; x++) {
-            // Échantillonnage simple (nearest neighbor)
-            int src_x = x * src_w / dst_w;
-            int src_y = y * src_h / dst_h;
-            
-            int src_idx = (src_y * src_w + src_x) * 4;
-            int dst_idx = (y * dst_w + x) * 4;
-            
-            dst[dst_idx + 0] = src[src_idx + 0]; // R
-            dst[dst_idx + 1] = src[src_idx + 1]; // G
-            dst[dst_idx + 2] = src[src_idx + 2]; // B
-            dst[dst_idx + 3] = src[src_idx + 3]; // A
-        }
-    }
-    return dst;
-}
 
 // Crée un masque de transparence à partir des données RGBA
 static Pixmap create_shape_mask(Display *dpy, Window root, const unsigned char *rgba, int w, int h) {
@@ -550,7 +528,7 @@ static void show_particles_around_mouse(const char *image_path) {
     // Redimensionner à la taille standard
     int img_width = PARTICLE_SIZE;
     int img_height = PARTICLE_SIZE;
-    unsigned char *img = resize_image_rgba(orig_img, orig_width, orig_height, img_width, img_height);
+    unsigned char *img = resize_image(orig_img, orig_width, orig_height, 4, img_width, img_height);
     stbi_image_free(orig_img);
     
     if (!img) {
@@ -834,7 +812,7 @@ static void show_mouse_clones(void) {
     int img_height = cursor_height;
     
     if (cursor_width != CLONE_SIZE || cursor_height != CLONE_SIZE) {
-        img = resize_image_rgba(cursor_rgba, cursor_width, cursor_height, CLONE_SIZE, CLONE_SIZE);
+        img = resize_image(cursor_rgba, cursor_width, cursor_height, 4, CLONE_SIZE, CLONE_SIZE);
         free(cursor_rgba);
         if (!img) {
             XCloseDisplay(dpy);

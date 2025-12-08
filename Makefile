@@ -8,7 +8,7 @@ LDFLAGS_SERVER = $(LDFLAGS)
 TARGET_CLIENT = wallchange
 TARGET_SERVER = server
 
-SRC_COMMON = src/common/mongoose.c src/common/cJSON.c
+SRC_COMMON = src/common/mongoose.c src/common/cJSON.c src/common/image_utils.c
 SRC_CLIENT = src/client/main.c src/client/utils.c src/client/wallpaper.c src/client/updater.c src/client/network.c src/client/keyboard.c $(SRC_COMMON)
 SRC_SERVER = src/server/main.c src/server/auth.c src/server/clients.c src/server/api.c $(SRC_COMMON)
 
