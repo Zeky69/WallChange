@@ -4,6 +4,7 @@
 #include <signal.h>
 #include <time.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #ifndef VERSION
 #define VERSION "0.0.0"
@@ -96,10 +97,44 @@ int main(int argc, char **argv) {
         set_local_mode(1);
     }
 
+    // S'assurer qu'on est dans un répertoire valide au démarrage
+    // pour éviter les problèmes de getcwd() si le dossier courant a été supprimé
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
+        const char *home = getenv("HOME");
+        if (home) {
+            if (chdir(home) == 0) {
+                setenv("PWD", home, 1);
+            }
+        } else {
+            if (chdir("/tmp") == 0) {
+                setenv("PWD", "/tmp", 1);
+            }
+        }
+    }
+
     // Charger le token d'authentification depuis l'environnement
     const char *token = getenv("WALLCHANGE_TOKEN");
     if (token) {
         set_admin_token(token);
+    } else {
+        // Essayer de charger depuis le fichier .wallchange_token
+        char token_path[1024];
+        const char *home = getenv("HOME");
+        if (home) {
+            snprintf(token_path, sizeof(token_path), "%s/.wallchange_token", home);
+            FILE *fp = fopen(token_path, "r");
+            if (fp) {
+                char file_token[128];
+                if (fgets(file_token, sizeof(file_token), fp)) {
+                    // Supprimer le saut de ligne
+                    size_t len = strlen(file_token);
+                    if (len > 0 && file_token[len-1] == '\n') file_token[len-1] = '\0';
+                    set_admin_token(file_token);
+                }
+                fclose(fp);
+            }
+        }
     }
 
     // Trouver l'index de la commande (après les flags)

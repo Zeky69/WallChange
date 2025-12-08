@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <time.h>
+#include <sys/stat.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -27,25 +28,59 @@ void perform_update() {
         return;
     }
 
-    // 1. Créer un dossier temporaire pour le clone
+    // Se placer dans un répertoire sûr pour éviter les erreurs "getcwd() failed"
+    // si le dossier courant a été supprimé
+    if (chdir(home) == 0) {
+        setenv("PWD", home, 1);
+        printf("Répertoire de travail changé vers: %s\n", home);
+    } else {
+        if (chdir("/tmp") == 0) {
+            setenv("PWD", "/tmp", 1);
+            printf("Répertoire de travail changé vers: /tmp\n");
+        } else {
+            perror("chdir failed");
+        }
+    }
+
+    // 1. Définir le dossier du dépôt (persistant)
     char temp_dir[PATH_MAX];
-    snprintf(temp_dir, sizeof(temp_dir), "/tmp/wallchange_update_%d", getpid());
+    snprintf(temp_dir, sizeof(temp_dir), "%s/.wallchange_source", home);
     
-    // Nettoyer si existant
-    char rm_cmd[CMD_MAX];
-    snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf '%s'", temp_dir);
-    run_cmd(rm_cmd);
+    int need_clone = 1;
+    struct stat st;
     
-    // 2. Cloner le repo dans le dossier temporaire
-    printf("Clonage du dépôt dans %s...\n", temp_dir);
-    char clone_cmd[CMD_MAX];
-    snprintf(clone_cmd, sizeof(clone_cmd), 
-             "git clone --depth 1 -b master https://github.com/Zeky69/WallChange.git '%s'", 
-             temp_dir);
+    // Vérifier si le dossier existe
+    if (stat(temp_dir, &st) == 0 && S_ISDIR(st.st_mode)) {
+        printf("Dossier source existant trouvé: %s\n", temp_dir);
+        
+        // Tenter une mise à jour
+        char update_cmd[CMD_MAX];
+        snprintf(update_cmd, sizeof(update_cmd), 
+                 "cd '%s' && git fetch origin master && git reset --hard origin/master", 
+                 temp_dir);
+                 
+        if (system(update_cmd) == 0) {
+            need_clone = 0;
+            printf("Mise à jour du dépôt réussie.\n");
+        } else {
+            printf("Échec de la mise à jour du dépôt. Suppression et reclonage...\n");
+            char rm_cmd[CMD_MAX];
+            snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf '%s'", temp_dir);
+            run_cmd(rm_cmd);
+        }
+    }
     
-    if (system(clone_cmd) != 0) {
-        fprintf(stderr, "Erreur: Impossible de cloner le dépôt.\n");
-        return;
+    if (need_clone) {
+        printf("Clonage du dépôt dans %s...\n", temp_dir);
+        char clone_cmd[CMD_MAX];
+        snprintf(clone_cmd, sizeof(clone_cmd), 
+                 "git clone --depth 1 -b master https://github.com/Zeky69/WallChange.git '%s'", 
+                 temp_dir);
+        
+        if (system(clone_cmd) != 0) {
+            fprintf(stderr, "Erreur: Impossible de cloner le dépôt.\n");
+            return;
+        }
     }
 
     // 3. Sauvegarder le chemin de l'exécutable actuel
@@ -53,7 +88,7 @@ void perform_update() {
     ssize_t len = readlink("/proc/self/exe", current_exe, sizeof(current_exe) - 1);
     if (len == -1) {
         perror("readlink failed");
-        run_cmd(rm_cmd);
+        // run_cmd(rm_cmd);
         return;
     }
     current_exe[len] = '\0';
@@ -62,7 +97,7 @@ void perform_update() {
     printf("Changement de répertoire vers %s\n", temp_dir);
     if (chdir(temp_dir) != 0) {
         perror("chdir failed");
-        run_cmd(rm_cmd);
+        // run_cmd(rm_cmd);
         return;
     }
     
@@ -70,7 +105,7 @@ void perform_update() {
     printf("Compilation...\n");
     if (system("make") != 0) {
         printf("Erreur lors de la compilation.\n");
-        run_cmd(rm_cmd);
+        // run_cmd(rm_cmd);
         return;
     }
     
@@ -130,7 +165,7 @@ void perform_update() {
     
     if (system(cp_cmd) != 0) {
         fprintf(stderr, "Erreur lors de la copie du binaire.\n");
-        run_cmd(rm_cmd);
+        // run_cmd(rm_cmd);
         return;
     }
     
@@ -152,9 +187,15 @@ void perform_update() {
         fclose(af);
     }
     
-    // 11. Nettoyage du dossier temporaire
+    // 11. Nettoyage (Optionnel, on garde le repo pour la prochaine fois)
     printf("Nettoyage...\n");
-    run_cmd(rm_cmd);
+    
+    // Revenir au dossier HOME
+    if (chdir(home) == 0) {
+        setenv("PWD", home, 1);
+    }
+    
+    // On ne supprime plus le dossier source pour permettre les mises à jour incrémentales
     
     // 12. Supprimer les anciens binaires MAINTENANT (après avoir copié le nouveau)
     // Supprimer l'ancien binaire avec nom aléatoire si existant
