@@ -184,7 +184,7 @@ void handle_list(struct mg_connection *c, struct mg_http_message *hm) {
             const char *client_id = (char *)t->data;
             
             // Ignorer les connexions admin
-            if (strncmp(client_id, "admin:", 6) == 0) {
+            if (strncmp(client_id, "admin", 5) == 0) {
                 continue;
             }
 
