@@ -615,6 +615,19 @@ void handle_reinstall(struct mg_connection *c, struct mg_http_message *hm) {
     }
 }
 
+static void sanitize_filename(char *dst, const char *src, size_t len) {
+    size_t j = 0;
+    for (size_t i = 0; i < len && j < 250; i++) {
+        char c = src[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || 
+            (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_') {
+            dst[j++] = c;
+        }
+    }
+    dst[j] = '\0';
+    if (j == 0) strcpy(dst, "upload.bin");
+}
+
 void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
     if (!validate_bearer_token(hm)) {
         mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
@@ -628,7 +641,10 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
     
     while ((ofs = mg_http_next_multipart(hm->body, ofs, &part)) > 0) {
         if (part.filename.len > 0) {
-            snprintf(saved_path, sizeof(saved_path), "%s/%.*s", g_upload_dir, (int)part.filename.len, part.filename.buf);
+            char safe_name[256];
+            sanitize_filename(safe_name, part.filename.buf, part.filename.len);
+            
+            snprintf(saved_path, sizeof(saved_path), "%s/%s", g_upload_dir, safe_name);
             
             FILE *fp = fopen(saved_path, "wb");
             if (fp) {
