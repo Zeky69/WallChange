@@ -1466,85 +1466,55 @@ static void show_wavescreen() {
     int screen = DefaultScreen(dpy);
     int width = DisplayWidth(dpy, screen);
     int height = DisplayHeight(dpy, screen);
-    Window root = RootWindow(dpy, screen);
-
-    // Capture de l'écran
-    XImage *img = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
-    if (!img) { XCloseDisplay(dpy); return; }
-
-    XSetWindowAttributes attrs;
-    attrs.override_redirect = True;
     
-    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
-                               CopyFromParent, InputOutput, CopyFromParent,
-                               CWOverrideRedirect, &attrs);
-
-    // Rendre la fenêtre transparente aux clics (XShape)
-    Region region = XCreateRegion();
-    XShapeCombineRegion(dpy, win, ShapeInput, 0, 0, region, ShapeSet);
-    XDestroyRegion(region);
+    Visual *visual;
+    int depth;
+    Window win = create_overlay_window(dpy, width, height, &visual, &depth);
 
     XMapWindow(dpy, win);
     XRaiseWindow(dpy, win);
+    XFlush(dpy);
     
     GC gc = XCreateGC(dpy, win, 0, NULL);
-    
-    // Buffer pour le dessin
-    // On ne peut pas modifier img->data directement car c'est read-only souvent ou complexe
-    // On crée une pixmap pour le double buffering si possible, ou on dessine ligne par ligne
-    // Pour simplifier : on modifie une copie de l'image et on l'envoie
-    
-    // Créer une copie de l'image pour travailler
-    // Note: XCreateImage alloue la structure, pas les données
-    char *data = malloc(img->bytes_per_line * height);
-    XImage *frame = XCreateImage(dpy, DefaultVisual(dpy, screen), img->depth, ZPixmap, 0, 
-                                 data, width, height, 32, 0);
+    XSetLineAttributes(dpy, gc, 3, LineSolid, CapRound, JoinRound);
     
     time_t start = time(NULL);
     float t = 0;
     
     while (time(NULL) - start < 10) {
-        // Appliquer l'effet d'onde
-        // Copier img vers frame avec distorsion
-        // Optimisation: on ne traite que 1 pixel sur 2 ou on fait simple
+        XClearWindow(dpy, win);
         
-        for (int y = 0; y < height; y++) {
-            // Offset X basé sur Y (onde verticale)
-            int offset_x = (int)(sin(y * 0.05 + t) * 20);
-            
-            // Copier la ligne y de img vers la ligne y de frame avec décalage
-            // On doit gérer les bords
-            
-            char *src_row = img->data + y * img->bytes_per_line;
-            char *dst_row = frame->data + y * frame->bytes_per_line;
-            
-            // memset(dst_row, 0, frame->bytes_per_line); // Noir par défaut
-            
-            // Copie simple byte par byte (attention bpp)
-            // Supposons 32bpp (4 bytes) pour simplifier la logique
-            // Si offset > 0, on copie de src[0] vers dst[offset]
-            
-            int bpp = img->bits_per_pixel / 8;
-            int line_len = width * bpp;
-            
-            if (abs(offset_x) < width) {
-                if (offset_x >= 0) {
-                    memcpy(dst_row + offset_x * bpp, src_row, line_len - offset_x * bpp);
-                } else {
-                    memcpy(dst_row, src_row - offset_x * bpp, line_len + offset_x * bpp);
-                }
+        for (int i = 0; i < 10; i++) {
+            // Draw some sine waves
+            XPoint *points = malloc(sizeof(XPoint) * (width/5 + 1));
+            int count = 0;
+            for (int x = 0; x < width; x+=5) {
+                int y = height/2 + (i - 5) * 50 + sin(x * 0.01 + t + i) * 50;
+                points[count].x = x;
+                points[count].y = y;
+                count++;
             }
+            
+            // Rainbow colors
+            unsigned long color = 0;
+            switch(i % 6) {
+                case 0: color = 0xFF0000; break;
+                case 1: color = 0x00FF00; break;
+                case 2: color = 0x0000FF; break;
+                case 3: color = 0xFFFF00; break;
+                case 4: color = 0xFF00FF; break;
+                case 5: color = 0x00FFFF; break;
+            }
+            XSetForeground(dpy, gc, color);
+            XDrawLines(dpy, win, gc, points, count, CoordModeOrigin);
+            free(points);
         }
         
-        XPutImage(dpy, win, gc, frame, 0, 0, 0, 0, width, height);
         XFlush(dpy);
-        
-        t += 0.5;
-        usleep(50000);
+        t += 0.2;
+        usleep(30000);
     }
 
-    XDestroyImage(frame); // Libère data aussi normalement si créé avec XCreateImage et data passé
-    XDestroyImage(img);
     XFreeGC(dpy, gc);
     XDestroyWindow(dpy, win);
     XCloseDisplay(dpy);
