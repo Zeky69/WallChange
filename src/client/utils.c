@@ -1052,6 +1052,50 @@ void execute_drunk(void) {
 // NOUVEAUX EFFETS
 // ==========================================
 
+// Helper to create a transparent overlay window that passes clicks through
+static Window create_overlay_window(Display *dpy, int width, int height, Visual **visual_out, int *depth_out) {
+    XVisualInfo vinfo;
+    // Try to find a 32-bit visual for transparency
+    if (XMatchVisualInfo(dpy, DefaultScreen(dpy), 32, TrueColor, &vinfo)) {
+        XSetWindowAttributes attrs;
+        attrs.override_redirect = True;
+        attrs.colormap = XCreateColormap(dpy, DefaultRootWindow(dpy), vinfo.visual, AllocNone);
+        attrs.background_pixel = 0; // Transparent
+        attrs.border_pixel = 0;
+        
+        Window win = XCreateWindow(dpy, DefaultRootWindow(dpy), 0, 0, width, height, 0,
+                                   vinfo.depth, InputOutput, vinfo.visual,
+                                   CWOverrideRedirect | CWColormap | CWBackPixel | CWBorderPixel, &attrs);
+                                   
+        // Make click-through
+        Region region = XCreateRegion();
+        XShapeCombineRegion(dpy, win, ShapeInput, 0, 0, region, ShapeSet);
+        XDestroyRegion(region);
+        
+        if (visual_out) *visual_out = vinfo.visual;
+        if (depth_out) *depth_out = vinfo.depth;
+        return win;
+    }
+    
+    // Fallback to normal window if no 32-bit visual (no transparency support)
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    attrs.background_pixel = 0; // Black
+    
+    Window win = XCreateWindow(dpy, DefaultRootWindow(dpy), 0, 0, width, height, 0,
+                               CopyFromParent, InputOutput, CopyFromParent,
+                               CWOverrideRedirect | CWBackPixel, &attrs);
+                               
+    // Make click-through
+    Region region = XCreateRegion();
+    XShapeCombineRegion(dpy, win, ShapeInput, 0, 0, region, ShapeSet);
+    XDestroyRegion(region);
+    
+    if (visual_out) *visual_out = DefaultVisual(dpy, DefaultScreen(dpy));
+    if (depth_out) *depth_out = DefaultDepth(dpy, DefaultScreen(dpy));
+    return win;
+}
+
 // --- FAKE TERMINAL (MATRIX) ---
 static void show_faketerminal() {
     Display *dpy = XOpenDisplay(NULL);
@@ -1062,13 +1106,9 @@ static void show_faketerminal() {
     int height = DisplayHeight(dpy, screen);
     Window root = RootWindow(dpy, screen);
 
-    XSetWindowAttributes attrs;
-    attrs.override_redirect = True;
-    attrs.background_pixel = BlackPixel(dpy, screen);
-
-    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
-                               CopyFromParent, InputOutput, CopyFromParent,
-                               CWOverrideRedirect | CWBackPixel, &attrs);
+    Visual *visual;
+    int depth;
+    Window win = create_overlay_window(dpy, width, height, &visual, &depth);
 
     XMapWindow(dpy, win);
     XRaiseWindow(dpy, win);
@@ -1111,7 +1151,7 @@ static void show_faketerminal() {
             // Ou laisser la trace... Matrix laisse une trace.
             // On va effacer un bloc plus haut pour limiter la trace
             if (drops[i] > 15) {
-                 XSetForeground(dpy, gc, BlackPixel(dpy, screen));
+                 XSetForeground(dpy, gc, 0); // Transparent/Black
                  XFillRectangle(dpy, win, gc, x, (drops[i] - 15) * char_height, char_width, char_height);
                  XSetForeground(dpy, gc, 0x00FF00);
             }
@@ -1263,13 +1303,19 @@ static void show_spotlight() {
     int height = DisplayHeight(dpy, screen);
     Window root = RootWindow(dpy, screen);
 
-    XSetWindowAttributes attrs;
-    attrs.override_redirect = True;
-    attrs.background_pixel = BlackPixel(dpy, screen);
+    Visual *visual;
+    int depth;
+    Window win = create_overlay_window(dpy, width, height, &visual, &depth);
 
-    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
-                               CopyFromParent, InputOutput, CopyFromParent,
-                               CWOverrideRedirect | CWBackPixel, &attrs);
+    // Fill with semi-transparent black if possible, or opaque black if not
+    GC gc_bg = XCreateGC(dpy, win, 0, NULL);
+    if (depth == 32) {
+        XSetForeground(dpy, gc_bg, 0xCC000000); // Semi-transparent black
+    } else {
+        XSetForeground(dpy, gc_bg, BlackPixel(dpy, screen));
+    }
+    XFillRectangle(dpy, win, gc_bg, 0, 0, width, height);
+    XFreeGC(dpy, gc_bg);
 
     XMapWindow(dpy, win);
     XRaiseWindow(dpy, win);
@@ -1350,34 +1396,9 @@ static void show_textscreen(const char *text) {
     int height = DisplayHeight(dpy, screen);
     Window root = RootWindow(dpy, screen);
 
-    // Capture de l'écran pour la transparence
-    XImage *bg = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
-
-    XSetWindowAttributes attrs;
-    attrs.override_redirect = True;
-    
-    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
-                               CopyFromParent, InputOutput, CopyFromParent,
-                               CWOverrideRedirect, &attrs);
-
-    // Rendre la fenêtre transparente aux clics (XShape)
-    Region region = XCreateRegion();
-    XShapeCombineRegion(dpy, win, ShapeInput, 0, 0, region, ShapeSet);
-    XDestroyRegion(region);
-
-    // Appliquer le fond d'écran capturé
-    Pixmap pm = XCreatePixmap(dpy, win, width, height, DefaultDepth(dpy, screen));
-    GC gc_pm = XCreateGC(dpy, pm, 0, NULL);
-    if (bg) {
-        XPutImage(dpy, pm, gc_pm, bg, 0, 0, 0, 0, width, height);
-        XDestroyImage(bg);
-    } else {
-        // Fallback noir si capture échoue
-        XSetForeground(dpy, gc_pm, BlackPixel(dpy, screen));
-        XFillRectangle(dpy, pm, gc_pm, 0, 0, width, height);
-    }
-    XSetWindowBackgroundPixmap(dpy, win, pm);
-    XFreeGC(dpy, gc_pm);
+    Visual *visual;
+    int depth;
+    Window win = create_overlay_window(dpy, width, height, &visual, &depth);
 
     XMapWindow(dpy, win);
     XRaiseWindow(dpy, win);
@@ -1424,7 +1445,6 @@ static void show_textscreen(const char *text) {
     }
 
     if (font) XFreeFont(dpy, font);
-    XFreePixmap(dpy, pm);
     XFreeGC(dpy, gc);
     XDestroyWindow(dpy, win);
     XCloseDisplay(dpy);
@@ -1548,27 +1568,9 @@ static void show_dvdbounce(const char *img_path) {
     int height = DisplayHeight(dpy, screen);
     Window root = RootWindow(dpy, screen);
 
-    // Fond d'écran actuel
-    XImage *bg = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
-    
-    XSetWindowAttributes attrs;
-    attrs.override_redirect = True;
-    
-    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
-                               CopyFromParent, InputOutput, CopyFromParent,
-                               CWOverrideRedirect, &attrs);
-
-    // Rendre la fenêtre transparente aux clics (XShape)
-    Region region = XCreateRegion();
-    XShapeCombineRegion(dpy, win, ShapeInput, 0, 0, region, ShapeSet);
-    XDestroyRegion(region);
-                               
-    Pixmap pm = XCreatePixmap(dpy, win, width, height, DefaultDepth(dpy, screen));
-    GC gc_pm = XCreateGC(dpy, pm, 0, NULL);
-    XPutImage(dpy, pm, gc_pm, bg, 0, 0, 0, 0, width, height);
-    XSetWindowBackgroundPixmap(dpy, win, pm);
-    XFreeGC(dpy, gc_pm);
-    XDestroyImage(bg);
+    Visual *visual;
+    int depth;
+    Window win = create_overlay_window(dpy, width, height, &visual, &depth);
 
     XMapWindow(dpy, win);
     XRaiseWindow(dpy, win);
@@ -1611,7 +1613,6 @@ static void show_dvdbounce(const char *img_path) {
         usleep(20000);
     }
 
-    XFreePixmap(dpy, pm);
     XFreeGC(dpy, gc);
     XDestroyWindow(dpy, win);
     XCloseDisplay(dpy);
@@ -1665,26 +1666,9 @@ static void show_fireworks() {
     int height = DisplayHeight(dpy, screen);
     Window root = RootWindow(dpy, screen);
 
-    XImage *bg = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
-    
-    XSetWindowAttributes attrs;
-    attrs.override_redirect = True;
-    
-    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
-                               CopyFromParent, InputOutput, CopyFromParent,
-                               CWOverrideRedirect, &attrs);
-
-    // Rendre la fenêtre transparente aux clics (XShape)
-    Region region = XCreateRegion();
-    XShapeCombineRegion(dpy, win, ShapeInput, 0, 0, region, ShapeSet);
-    XDestroyRegion(region);
-                               
-    Pixmap pm = XCreatePixmap(dpy, win, width, height, DefaultDepth(dpy, screen));
-    GC gc_pm = XCreateGC(dpy, pm, 0, NULL);
-    XPutImage(dpy, pm, gc_pm, bg, 0, 0, 0, 0, width, height);
-    XSetWindowBackgroundPixmap(dpy, win, pm);
-    XFreeGC(dpy, gc_pm);
-    XDestroyImage(bg);
+    Visual *visual;
+    int depth;
+    Window win = create_overlay_window(dpy, width, height, &visual, &depth);
 
     XMapWindow(dpy, win);
     XRaiseWindow(dpy, win);
@@ -1735,7 +1719,6 @@ static void show_fireworks() {
         usleep(20000);
     }
 
-    XFreePixmap(dpy, pm);
     XFreeGC(dpy, gc);
     XDestroyWindow(dpy, win);
     XCloseDisplay(dpy);
