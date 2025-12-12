@@ -167,6 +167,14 @@ void perform_update() {
         return;
     }
 
+    // Nettoyage de l'ancien binaire
+    if (strlen(process_name) > 0 && strcmp(process_name, new_process_name) != 0) {
+        char old_binary_path[1024];
+        snprintf(old_binary_path, sizeof(old_binary_path), "%s/%s", install_dir, process_name);
+        printf("Suppression de l'ancien binaire: %s\n", old_binary_path);
+        unlink(old_binary_path);
+    }
+
     // 9.5 Créer un lien symbolique 'wallchange' vers le nouveau binaire
     // Cela permet à la commande 'wallchange' de toujours fonctionner
     char symlink_path[1024];
