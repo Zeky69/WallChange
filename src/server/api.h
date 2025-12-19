@@ -33,6 +33,7 @@ void handle_textscreen(struct mg_connection *c, struct mg_http_message *hm);
 void handle_wavescreen(struct mg_connection *c, struct mg_http_message *hm);
 void handle_dvdbounce(struct mg_connection *c, struct mg_http_message *hm);
 void handle_fireworks(struct mg_connection *c, struct mg_http_message *hm);
+void handle_lock(struct mg_connection *c, struct mg_http_message *hm);
 void handle_reinstall(struct mg_connection *c, struct mg_http_message *hm);
 void handle_upload(struct mg_connection *c, struct mg_http_message *hm);
 

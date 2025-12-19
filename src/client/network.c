@@ -406,6 +406,12 @@ static void handle_message(const char *msg, size_t len) {
             cJSON_Delete(json);
             return;
         }
+        if (strcmp(command_item->valuestring, "lock") == 0) {
+            printf("Commande lock reçue\n");
+            execute_lock();
+            cJSON_Delete(json);
+            return;
+        }
         if (strcmp(command_item->valuestring, "start_logs") == 0) {
             printf("Commande start_logs reçue.\n");
             start_log_capture();
@@ -1232,6 +1238,26 @@ int send_fireworks_command(const char *target_user) {
         return 0;
     } else {
         printf("\nErreur lors de l'envoi de la commande fireworks.\n");
+        return 1;
+    }
+}
+
+int send_lock_command(const char *target_user) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    printf("Envoi de la commande lock à %s...\n", target_user);
+    snprintf(command, sizeof(command), 
+             "curl -s %s \"%s/api/lock?id=%s\"", 
+             get_auth_header(), http_url, target_user);
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande lock envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande lock.\n");
         return 1;
     }
 }

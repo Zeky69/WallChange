@@ -1702,3 +1702,9 @@ void execute_fireworks(void) {
         exit(0);
     }
 }
+
+void execute_lock(void) {
+    // Execute the lock command
+    if (system("/usr/bin/dm-tool switch-to-greeter") == -1) {
+    }
+}

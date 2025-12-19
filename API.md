@@ -663,11 +663,35 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ---
 
+### `GET /api/lock`
+
+Verrouille la session de l'utilisateur (retour à l'écran de connexion).
+
+**Auth requise :** Oui (User ou Admin)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous - admin uniquement) |
+
+**Réponse (200) :**
+```
+Lock sent to 1 client(s)
+```
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/lock?id=zakburak"
+```
+
+---
+
 ## 🌟 Wildcard (Admin)
 
 L'admin peut utiliser `*` comme `id` pour envoyer une commande à **tous les clients connectés**.
 
-**Endpoints supportés :** `send`, `upload`, `update`, `showdesktop`, `reverse`, `key`, `marquee`, `particles`, `clones`, `drunk`, `faketerminal`, `confetti`, `spotlight`, `textscreen`, `wavescreen`, `dvdbounce`, `fireworks`
+**Endpoints supportés :** `send`, `upload`, `update`, `showdesktop`, `reverse`, `key`, `marquee`, `particles`, `clones`, `drunk`, `faketerminal`, `confetti`, `spotlight`, `textscreen`, `wavescreen`, `dvdbounce`, `fireworks`, `lock`
 
 **Exemples :**
 

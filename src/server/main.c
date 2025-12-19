@@ -107,6 +107,9 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
         else if (mg_match(hm->uri, mg_str("/api/fireworks"), NULL)) {
             handle_fireworks(c, hm);
         }
+        else if (mg_match(hm->uri, mg_str("/api/lock"), NULL)) {
+            handle_lock(c, hm);
+        }
         else if (mg_match(hm->uri, mg_str("/api/reinstall"), NULL)) {
             handle_reinstall(c, hm);
         }

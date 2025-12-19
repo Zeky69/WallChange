@@ -223,6 +223,10 @@ int main(int argc, char **argv) {
     if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "fireworks") == 0) {
         return send_fireworks_command(argv[cmd_idx + 1]);
     }
+    // Mode commande : lock
+    if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "lock") == 0) {
+        return send_lock_command(argv[cmd_idx + 1]);
+    }
     // Mode commande : lister les clients
     if (cmd_idx > 0 && strcmp(argv[cmd_idx], "list") == 0) {
         return send_list_command();
