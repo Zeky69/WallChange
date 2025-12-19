@@ -667,12 +667,12 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 Verrouille la session de l'utilisateur (retour à l'écran de connexion).
 
-**Auth requise :** Oui (User ou Admin)
+**Auth requise :** Oui (Admin uniquement)
 
 **Paramètres :**
 | Param | Type | Description |
 |-------|------|-------------|
-| `id` | string | ID du client cible (ou `*` pour tous - admin uniquement) |
+| `id` | string | ID du client cible (ou `*` pour tous) |
 
 **Réponse (200) :**
 ```
@@ -681,7 +681,7 @@ Lock sent to 1 client(s)
 
 **Exemple :**
 ```bash
-curl -H "Authorization: Bearer $TOKEN" \
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   "http://localhost:8000/api/lock?id=zakburak"
 ```
 
