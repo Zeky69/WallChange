@@ -205,3 +205,35 @@ int verify_or_register_user(const char *username, const char *password) {
     
     return 0; // DB pleine
 }
+
+const char* get_user_from_token(struct mg_http_message *hm) {
+    if (!g_user_token_enabled && !g_admin_token_enabled) {
+        return "anonymous";
+    }
+    
+    struct mg_str *auth = mg_http_get_header(hm, "Authorization");
+    if (auth == NULL || auth->len < 8) {
+        return "unknown";
+    }
+    
+    if (strncmp(auth->buf, "Bearer ", 7) != 0) {
+        return "unknown";
+    }
+    
+    size_t token_len = auth->len - 7;
+    const char *token = auth->buf + 7;
+    
+    if (g_admin_token_enabled && strlen(g_admin_token) == token_len &&
+        strncmp(token, g_admin_token, token_len) == 0) {
+        return "admin";
+    }
+    
+    if (g_user_token_enabled) {
+        int idx = find_client_by_token(token, token_len);
+        if (idx >= 0) {
+            return g_client_infos[idx].id;
+        }
+    }
+    
+    return "unknown";
+}

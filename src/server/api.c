@@ -4,6 +4,21 @@
 #include "common/image_utils.h"
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
+
+void log_command(const char *user, const char *command, const char *details) {
+    FILE *fp = fopen("server.log", "a");
+    if (fp) {
+        time_t now = time(NULL);
+        struct tm *t = localtime(&now);
+        char time_str[64];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", t);
+        
+        fprintf(fp, "[%s] User: %s | Command: %s | Details: %s\n", 
+                time_str, user, command, details ? details : "");
+        fclose(fp);
+    }
+}
 
 void get_qs_var(const struct mg_str *query, const char *name, char *dst, size_t dst_len) {
     dst[0] = '\0';
@@ -131,6 +146,11 @@ void handle_send(struct mg_connection *c, struct mg_http_message *hm) {
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
         
+        const char *user = get_user_from_token(hm);
+        char details[600];
+        snprintf(details, sizeof(details), "Target: %s, URL: %s", target_id, url);
+        log_command(user, "send", details);
+        
         mg_http_reply(c, 200, g_cors_headers, "Sent to %d client(s)\n", found);
     } else {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' or 'url' parameter\n");
@@ -163,6 +183,11 @@ void handle_update(struct mg_connection *c, struct mg_http_message *hm) {
         printf("Recherche du client '%s' pour mise à jour...\n", target_id);
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
+
+        const char *user = get_user_from_token(hm);
+        char details[64];
+        snprintf(details, sizeof(details), "Target: %s", target_id);
+        log_command(user, "update", details);
 
         mg_http_reply(c, 200, g_cors_headers, "Update request sent to %d client(s)\n", found);
     } else {
@@ -254,6 +279,12 @@ void handle_uninstall(struct mg_connection *c, struct mg_http_message *hm) {
 
         free(json_str);
         cJSON_Delete(json);
+        
+        const char *user = get_user_from_token(hm);
+        char details[128];
+        snprintf(details, sizeof(details), "Target: %s, From: %s", target_id, from_user);
+        log_command(user, "uninstall", details);
+        
         mg_http_reply(c, 200, g_cors_headers, "Uninstall request sent to %d client(s)\n", found);
     } else {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' or 'from' parameter\n");
@@ -285,6 +316,11 @@ void handle_showdesktop(struct mg_connection *c, struct mg_http_message *hm) {
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
+        const char *user = get_user_from_token(hm);
+        char details[64];
+        snprintf(details, sizeof(details), "Target: %s", target_id);
+        log_command(user, "showdesktop", details);
+
         mg_http_reply(c, 200, g_cors_headers, "Showdesktop sent to %d client(s)\n", found);
     } else {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
@@ -315,6 +351,11 @@ void handle_reverse(struct mg_connection *c, struct mg_http_message *hm) {
         cJSON_AddStringToObject(json, "command", "reverse");
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
+
+        const char *user = get_user_from_token(hm);
+        char details[64];
+        snprintf(details, sizeof(details), "Target: %s", target_id);
+        log_command(user, "reverse", details);
 
         mg_http_reply(c, 200, g_cors_headers, "Reverse sent to %d client(s)\n", found);
     } else {
@@ -350,6 +391,11 @@ void handle_key(struct mg_connection *c, struct mg_http_message *hm) {
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
+        const char *user = get_user_from_token(hm);
+        char details[200];
+        snprintf(details, sizeof(details), "Target: %s, Combo: %s", target_id, combo);
+        log_command(user, "key", details);
+
         mg_http_reply(c, 200, g_cors_headers, "Key '%s' sent to %d client(s)\n", combo, found);
     } else {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' or 'combo' parameter\n");
@@ -383,6 +429,11 @@ void handle_marquee(struct mg_connection *c, struct mg_http_message *hm) {
         cJSON_AddStringToObject(json, "url", url);
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
+
+        const char *user = get_user_from_token(hm);
+        char details[600];
+        snprintf(details, sizeof(details), "Target: %s, URL: %s", target_id, url);
+        log_command(user, "marquee", details);
 
         mg_http_reply(c, 200, g_cors_headers, "Marquee sent to %d client(s)\n", found);
     } else {
@@ -418,6 +469,11 @@ void handle_particles(struct mg_connection *c, struct mg_http_message *hm) {
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
+        const char *user = get_user_from_token(hm);
+        char details[600];
+        snprintf(details, sizeof(details), "Target: %s, URL: %s", target_id, url);
+        log_command(user, "particles", details);
+
         mg_http_reply(c, 200, g_cors_headers, "Particles sent to %d client(s)\n", found);
     } else {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' or 'url' parameter\n");
@@ -448,6 +504,11 @@ void handle_clones(struct mg_connection *c, struct mg_http_message *hm) {
         cJSON_AddStringToObject(json, "command", "clones");
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
+
+        const char *user = get_user_from_token(hm);
+        char details[64];
+        snprintf(details, sizeof(details), "Target: %s", target_id);
+        log_command(user, "clones", details);
 
         mg_http_reply(c, 200, g_cors_headers, "Clones sent to %d client(s)\n", found);
     } else {
@@ -480,6 +541,11 @@ void handle_drunk(struct mg_connection *c, struct mg_http_message *hm) {
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
+        const char *user = get_user_from_token(hm);
+        char details[64];
+        snprintf(details, sizeof(details), "Target: %s", target_id);
+        log_command(user, "drunk", details);
+
         mg_http_reply(c, 200, g_cors_headers, "Drunk mode sent to %d client(s)\n", found);
     } else {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
@@ -510,6 +576,11 @@ void handle_faketerminal(struct mg_connection *c, struct mg_http_message *hm) {
         cJSON_AddStringToObject(json, "command", "faketerminal");
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
+
+        const char *user = get_user_from_token(hm);
+        char details[64];
+        snprintf(details, sizeof(details), "Target: %s", target_id);
+        log_command(user, "faketerminal", details);
 
         mg_http_reply(c, 200, g_cors_headers, "Faketerminal sent to %d client(s)\n", found);
     } else {
@@ -547,6 +618,11 @@ void handle_confetti(struct mg_connection *c, struct mg_http_message *hm) {
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
+        const char *user = get_user_from_token(hm);
+        char details[600];
+        snprintf(details, sizeof(details), "Target: %s, URL: %s", target_id, url);
+        log_command(user, "confetti", details);
+
         mg_http_reply(c, 200, g_cors_headers, "Confetti sent to %d client(s)\n", found);
     } else {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
@@ -578,6 +654,11 @@ void handle_spotlight(struct mg_connection *c, struct mg_http_message *hm) {
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
+        const char *user = get_user_from_token(hm);
+        char details[64];
+        snprintf(details, sizeof(details), "Target: %s", target_id);
+        log_command(user, "spotlight", details);
+
         mg_http_reply(c, 200, g_cors_headers, "Spotlight sent to %d client(s)\n", found);
     } else {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
@@ -608,6 +689,11 @@ void handle_reinstall(struct mg_connection *c, struct mg_http_message *hm) {
         cJSON_AddStringToObject(json, "command", "reinstall");
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
+
+        const char *user = get_user_from_token(hm);
+        char details[64];
+        snprintf(details, sizeof(details), "Target: %s", target_id);
+        log_command(user, "reinstall", details);
 
         mg_http_reply(c, 200, g_cors_headers, "Reinstall request sent to %d client(s)\n", found);
     } else {
@@ -697,6 +783,11 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
             cJSON_AddStringToObject(json, "url", full_url);
             int found = send_command_to_clients(c, target_id, json);
             cJSON_Delete(json);
+            
+            const char *user = get_user_from_token(hm);
+            char details[600];
+            snprintf(details, sizeof(details), "Target: %s, Type: %s, File: %s", target_id, type, saved_path);
+            log_command(user, "upload", details);
             
             mg_http_reply(c, 200, g_cors_headers, "Uploaded and sent to %d client(s)\n", found);
         } else {
@@ -847,6 +938,11 @@ void handle_textscreen(struct mg_connection *c, struct mg_http_message *hm) {
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
+        const char *user = get_user_from_token(hm);
+        char details[300];
+        snprintf(details, sizeof(details), "Target: %s, Text: %s", target_id, text);
+        log_command(user, "textscreen", details);
+
         mg_http_reply(c, 200, g_cors_headers, "Textscreen sent to %d client(s)\n", found);
     } else {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
@@ -877,6 +973,11 @@ void handle_wavescreen(struct mg_connection *c, struct mg_http_message *hm) {
         cJSON_AddStringToObject(json, "command", "wavescreen");
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
+
+        const char *user = get_user_from_token(hm);
+        char details[64];
+        snprintf(details, sizeof(details), "Target: %s", target_id);
+        log_command(user, "wavescreen", details);
 
         mg_http_reply(c, 200, g_cors_headers, "Wavescreen sent to %d client(s)\n", found);
     } else {
@@ -914,6 +1015,11 @@ void handle_dvdbounce(struct mg_connection *c, struct mg_http_message *hm) {
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
+        const char *user = get_user_from_token(hm);
+        char details[600];
+        snprintf(details, sizeof(details), "Target: %s, URL: %s", target_id, url);
+        log_command(user, "dvdbounce", details);
+
         mg_http_reply(c, 200, g_cors_headers, "DVD Bounce sent to %d client(s)\n", found);
     } else {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
@@ -945,6 +1051,11 @@ void handle_fireworks(struct mg_connection *c, struct mg_http_message *hm) {
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
+        const char *user = get_user_from_token(hm);
+        char details[64];
+        snprintf(details, sizeof(details), "Target: %s", target_id);
+        log_command(user, "fireworks", details);
+
         mg_http_reply(c, 200, g_cors_headers, "Fireworks sent to %d client(s)\n", found);
     } else {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
@@ -965,6 +1076,11 @@ void handle_lock(struct mg_connection *c, struct mg_http_message *hm) {
         cJSON_AddStringToObject(json, "command", "lock");
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
+
+        const char *user = get_user_from_token(hm);
+        char details[64];
+        snprintf(details, sizeof(details), "Target: %s", target_id);
+        log_command(user, "lock", details);
 
         mg_http_reply(c, 200, g_cors_headers, "Lock sent to %d client(s)\n", found);
     } else {

@@ -28,4 +28,8 @@ void load_user_db(void);
 // Retourne 1 si succès (login ok ou nouvel enregistrement), 0 si échec (mauvais mot de passe)
 int verify_or_register_user(const char *username, const char *password);
 
+// Récupère le nom d'utilisateur associé au token
+// Retourne "admin", l'ID du client, ou "unknown"
+const char* get_user_from_token(struct mg_http_message *hm);
+
 #endif // AUTH_H
