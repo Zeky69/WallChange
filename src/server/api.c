@@ -901,6 +901,14 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
                     snprintf(c->data, sizeof(c->data), "admin:%s", target->valuestring);
                     printf("👑 Admin souscrit aux logs de %s\n", target->valuestring);
                     
+                    // Envoyer stop_logs d'abord pour forcer le client à redémarrer la capture (rewind)
+                    // Cela garantit que le nouvel admin reçoit tout l'historique
+                    cJSON *stop_cmd = cJSON_CreateObject();
+                    cJSON_AddStringToObject(stop_cmd, "command", "stop_logs");
+                    cJSON_AddStringToObject(stop_cmd, "from", "admin");
+                    send_command_to_clients(c, target->valuestring, stop_cmd);
+                    cJSON_Delete(stop_cmd);
+
                     // Envoyer la commande start_logs au client cible
                     cJSON *cmd = cJSON_CreateObject();
                     cJSON_AddStringToObject(cmd, "command", "start_logs");
