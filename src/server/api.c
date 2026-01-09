@@ -141,12 +141,14 @@ void handle_send(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "url", url);
+        if (user) cJSON_AddStringToObject(json, "from", user);
+        
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
         
-        const char *user = get_user_from_token(hm);
         char details[600];
         snprintf(details, sizeof(details), "Target: %s, URL: %s", target_id, url);
         log_command(user, "send", details);
@@ -177,14 +179,15 @@ void handle_update(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "update");
+        if (user) cJSON_AddStringToObject(json, "from", user);
         
         printf("Recherche du client '%s' pour mise à jour...\n", target_id);
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
-        const char *user = get_user_from_token(hm);
         char details[64];
         snprintf(details, sizeof(details), "Target: %s", target_id);
         log_command(user, "update", details);
@@ -262,14 +265,20 @@ void handle_uninstall(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "uninstall");
-        cJSON_AddStringToObject(json, "from", from_user);
+        // Priorité au token user. Si from_user (query param) est différent, c'est étrange,
+        // mais pour la sécurité, on utilise le user du token.
+        // Ou bien on garde from_user (pour debug) mais on ajoute "initiated_by".
+        // Le code client attend "from" pour vérifier si c'est autorisé.
+        // On écrase donc "from" avec le user authentifié pour être sûr.
+        cJSON_AddStringToObject(json, "from", user); 
         char *json_str = cJSON_PrintUnformatted(json);
 
         int found = 0;
         printf("Recherche du client '%s' pour désinstallation (demandé par %s)...\n", 
-               target_id, from_user);
+               target_id, user);
         for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
             if (t->is_websocket && strcmp(t->data, target_id) == 0) {
                 mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
@@ -280,9 +289,8 @@ void handle_uninstall(struct mg_connection *c, struct mg_http_message *hm) {
         free(json_str);
         cJSON_Delete(json);
         
-        const char *user = get_user_from_token(hm);
         char details[128];
-        snprintf(details, sizeof(details), "Target: %s, From: %s", target_id, from_user);
+        snprintf(details, sizeof(details), "Target: %s, From: %s", target_id, user);
         log_command(user, "uninstall", details);
         
         mg_http_reply(c, 200, g_cors_headers, "Uninstall request sent to %d client(s)\n", found);
@@ -311,12 +319,13 @@ void handle_showdesktop(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "showdesktop");
+        if (user) cJSON_AddStringToObject(json, "from", user);
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
-        const char *user = get_user_from_token(hm);
         char details[64];
         snprintf(details, sizeof(details), "Target: %s", target_id);
         log_command(user, "showdesktop", details);
@@ -347,12 +356,13 @@ void handle_reverse(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "reverse");
+        if (user) cJSON_AddStringToObject(json, "from", user);
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
-        const char *user = get_user_from_token(hm);
         char details[64];
         snprintf(details, sizeof(details), "Target: %s", target_id);
         log_command(user, "reverse", details);
@@ -385,13 +395,15 @@ void handle_key(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "key");
         cJSON_AddStringToObject(json, "combo", combo);
+        if (user) cJSON_AddStringToObject(json, "from", user);
+        
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
-        const char *user = get_user_from_token(hm);
         char details[200];
         snprintf(details, sizeof(details), "Target: %s, Combo: %s", target_id, combo);
         log_command(user, "key", details);
@@ -424,13 +436,15 @@ void handle_marquee(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "marquee");
         cJSON_AddStringToObject(json, "url", url);
+        if (user) cJSON_AddStringToObject(json, "from", user);
+        
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
-        const char *user = get_user_from_token(hm);
         char details[600];
         snprintf(details, sizeof(details), "Target: %s, URL: %s", target_id, url);
         log_command(user, "marquee", details);
@@ -463,13 +477,15 @@ void handle_particles(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "particles");
         cJSON_AddStringToObject(json, "url", url);
+        if (user) cJSON_AddStringToObject(json, "from", user);
+        
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
-        const char *user = get_user_from_token(hm);
         char details[600];
         snprintf(details, sizeof(details), "Target: %s, URL: %s", target_id, url);
         log_command(user, "particles", details);
@@ -500,12 +516,14 @@ void handle_clones(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "clones");
+        if (user) cJSON_AddStringToObject(json, "from", user);
+        
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
-        const char *user = get_user_from_token(hm);
         char details[64];
         snprintf(details, sizeof(details), "Target: %s", target_id);
         log_command(user, "clones", details);
@@ -536,12 +554,14 @@ void handle_drunk(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "drunk");
+        if (user) cJSON_AddStringToObject(json, "from", user);
+        
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
-        const char *user = get_user_from_token(hm);
         char details[64];
         snprintf(details, sizeof(details), "Target: %s", target_id);
         log_command(user, "drunk", details);
@@ -572,12 +592,14 @@ void handle_faketerminal(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "faketerminal");
+        if (user) cJSON_AddStringToObject(json, "from", user);
+        
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
-        const char *user = get_user_from_token(hm);
         char details[64];
         snprintf(details, sizeof(details), "Target: %s", target_id);
         log_command(user, "faketerminal", details);
@@ -610,15 +632,17 @@ void handle_confetti(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "confetti");
         if (strlen(url) > 0) {
             cJSON_AddStringToObject(json, "url", url);
         }
+        if (user) cJSON_AddStringToObject(json, "from", user);
+        
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
-        const char *user = get_user_from_token(hm);
         char details[600];
         snprintf(details, sizeof(details), "Target: %s, URL: %s", target_id, url);
         log_command(user, "confetti", details);
@@ -649,12 +673,14 @@ void handle_spotlight(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "spotlight");
+        if (user) cJSON_AddStringToObject(json, "from", user);
+        
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
-        const char *user = get_user_from_token(hm);
         char details[64];
         snprintf(details, sizeof(details), "Target: %s", target_id);
         log_command(user, "spotlight", details);
@@ -685,12 +711,14 @@ void handle_reinstall(struct mg_connection *c, struct mg_http_message *hm) {
             return;
         }
 
+        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "reinstall");
+        if (user) cJSON_AddStringToObject(json, "from", user);
+        
         int found = send_command_to_clients(c, target_id, json);
         cJSON_Delete(json);
 
-        const char *user = get_user_from_token(hm);
         char details[64];
         snprintf(details, sizeof(details), "Target: %s", target_id);
         log_command(user, "reinstall", details);
@@ -876,6 +904,7 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
                     // Envoyer la commande start_logs au client cible
                     cJSON *cmd = cJSON_CreateObject();
                     cJSON_AddStringToObject(cmd, "command", "start_logs");
+                    cJSON_AddStringToObject(cmd, "from", "admin");
                     send_command_to_clients(c, target->valuestring, cmd);
                     cJSON_Delete(cmd);
                 }
