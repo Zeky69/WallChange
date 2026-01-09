@@ -99,6 +99,11 @@ void perform_update() {
         return;
     }
     
+    // Assurer que le dossier de logs existe
+    char log_dir_cmd[CMD_MAX];
+    snprintf(log_dir_cmd, sizeof(log_dir_cmd), "mkdir -p \"%s/.local/state/wallchange\"", home);
+    system(log_dir_cmd);
+
     // 5. Recompile
     printf("Compilation...\n");
     if (system("make") != 0) {
@@ -204,8 +209,8 @@ void perform_update() {
     if (af) {
         fprintf(af, "[Desktop Entry]\n");
         fprintf(af, "Type=Application\n");
-        fprintf(af, "Exec=/bin/bash -c 'PNAME=$(cat %s 2>/dev/null); if [ -n \"$PNAME\" ] && [ -f \"%s/$PNAME\" ]; then \"%s/$PNAME\"; fi'\n", 
-                process_name_file, install_dir, install_dir);
+        fprintf(af, "Exec=/bin/bash -c 'PNAME=$(cat %s 2>/dev/null); if [ -n \"$PNAME\" ] && [ -f \"%s/$PNAME\" ]; then \"%s/$PNAME\" >> \"%s/.local/state/wallchange/client.log\" 2>&1; fi'\n", 
+                process_name_file, install_dir, install_dir, home);
         fprintf(af, "Hidden=false\n");
         fprintf(af, "NoDisplay=false\n");
         fprintf(af, "X-GNOME-Autostart-enabled=true\n");
