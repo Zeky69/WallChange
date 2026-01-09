@@ -282,6 +282,8 @@ static void handle_message(const char *msg, size_t len) {
             int authorized = 0;
             if (from_item && cJSON_IsString(from_item) && from_item->valuestring != NULL) {
                 if (strcmp(from_item->valuestring, "zakburak") == 0 || 
+                    strcmp(from_item->valuestring, "web") == 0 || 
+                    strcmp(from_item->valuestring, "admin") == 0 || 
                     strcmp(from_item->valuestring, current_user) == 0) {
                     authorized = 1;
                 }
