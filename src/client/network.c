@@ -512,7 +512,7 @@ void connect_ws() {
 void init_network() {
     // Rediriger les logs Mongoose vers le stdout original pour éviter la boucle infinie
     // lors de la capture des logs
-    mg_log_set_fn(mg_log_wrapper, NULL);
+    mg_log_set(0); // Désactiver complètement les logs Mongoose (spam)
     mg_mgr_init(&mgr);
 }
 
@@ -560,6 +560,10 @@ void network_poll(int timeout_ms) {
         int has_newline = (memchr(log_buffer, '\n', log_buffer_len) != NULL);
         
         if (log_buffer_len > 0 && (buffer_full || time_elapsed || has_newline)) {
+            // Optimisation: ne pas envoyer juste des retours à la ligne vides en boucle si le fichier a beaucoup d'espaces
+            if (log_buffer_len == 1 && log_buffer[0] == '\n') {
+                 // On peut ignorer si on veut éviter le spam de lignes vides, ou non.
+            }
             log_buffer[log_buffer_len] = '\0';
             
             cJSON *json = cJSON_CreateObject();
