@@ -525,41 +525,55 @@ void network_poll(int timeout_ms) {
 
     // Lire les logs du fichier et les envoyer (avec buffering)
     if (logging_enabled && ws_conn != NULL && log_fp != NULL) {
+        int is_eof = 0;
+        
         // Essayer de lire autant que possible sans bloquer
         while (log_buffer_len < sizeof(log_buffer) - 1) {
-            // Lecture non-bloquante ? fgets bloque...
-            // Mais fread aussi.
-            // On utilise fread et on compte sur le fait que OS buffer
-            // Si EOF, on s'arrête. Comme on est dans une boucle poll (qui tourne vite), 
-            // on ne veut pas bloquer si pas de data.
-            // Clearerr avant ?
-            
-            // Pour faire comme `tail -f`, on lit ce qui est dispo.
-            size_t n = fread(log_buffer + log_buffer_len, 1, sizeof(log_buffer) - 1 - log_buffer_len, log_fp);
+            size_t bytes_to_read = sizeof(log_buffer) - 1 - log_buffer_len;
+            size_t n = fread(log_buffer + log_buffer_len, 1, bytes_to_read, log_fp);
 
             if (n > 0) {
                 log_buffer_len += n;
+                // Si on a lu moins que demandé, on est probablement à la fin du fichier
+                if (n < bytes_to_read) is_eof = 1;
             } else {
                 // n == 0 (EOF ou erreur)
-                clearerr(log_fp); // Clear EOF flag to enable reading new data next time
+                clearerr(log_fp);
+                is_eof = 1;
                 break;
             }
         }
 
-        // Logique d'envoi :
-        // 1. Si buffer presque plein (> 2KB)
-        // 2. Si données présentes ET délai écoulé (> 50ms) - Réduit pour plus de réactivité
-        // 3. Si un saut de ligne est détecté (comportement terminal)
+        // Logique d'envoi optimisée ("Smart Batching")
+        // - Si le buffer est plein: on envoie tout de suite (débit maximum en lecture historique)
+        // - Si le buffer n'est pas plein (EOF de fichier):
+        //   - Si temps écoulé > 200ms OU newlines détectés: on envoie (réactivité temps réel)
         
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
         long long now_ms = now.tv_sec * 1000 + now.tv_nsec / 1000000;
         
         int buffer_full = (log_buffer_len > 2048);
-        int time_elapsed = (now_ms - last_log_flush_ms > 50);
+        int time_elapsed = (now_ms - last_log_flush_ms > 200); // 200ms pour grouper un peu plus
         int has_newline = (memchr(log_buffer, '\n', log_buffer_len) != NULL);
         
-        if (log_buffer_len > 0 && (buffer_full || time_elapsed || has_newline)) {
+        // CONDITION CRITIQUE:
+        // Si on est en train de lire l'historique (pas EOF), on attend que le buffer soit plein
+        // pour ne pas spammer des petits paquets à chaque ligne.
+        // Si on est à EOF (mode tail), on envoie dès qu'on a une ligne ou que le temps passe.
+        
+        int should_send = 0;
+        
+        if (buffer_full) {
+            should_send = 1;
+        } else if (is_eof && log_buffer_len > 0) {
+            // Mode temps réel (fin de fichier atteinte)
+            if (time_elapsed || has_newline) {
+                should_send = 1;
+            }
+        }
+
+        if (should_send && log_buffer_len > 0) {
             // Optimisation: ne pas envoyer juste des retours à la ligne vides en boucle si le fichier a beaucoup d'espaces
             if (log_buffer_len == 1 && log_buffer[0] == '\n') {
                  // On peut ignorer si on veut éviter le spam de lignes vides, ou non.
@@ -567,6 +581,7 @@ void network_poll(int timeout_ms) {
             log_buffer[log_buffer_len] = '\0';
             
             cJSON *json = cJSON_CreateObject();
+
             cJSON_AddStringToObject(json, "type", "log");
             cJSON_AddStringToObject(json, "data", log_buffer);
             char *json_str = cJSON_PrintUnformatted(json);

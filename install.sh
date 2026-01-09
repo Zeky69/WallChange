@@ -56,6 +56,12 @@ if [ -f "$PROCESS_NAME_FILE" ]; then
     rm -f "$INSTALL_DIR/$OLD_PROCESS_NAME" 2>/dev/null
 fi
 
+# Rotation des logs (pour éviter de re-envoyer l'historique de spam précédent)
+if [ -f "$LOG_FILE" ]; then
+    mv "$LOG_FILE" "${LOG_FILE}.old"
+    echo "Log rotated." > "$LOG_FILE"
+fi
+
 # Arrêter le processus wallchange (anciennes installations)
 pkill -x wallchange 2>/dev/null || true
 
