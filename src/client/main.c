@@ -82,6 +82,10 @@ static int get_command_index(int argc, char **argv) {
 }
 
 int main(int argc, char **argv) {
+    // Disable stdout buffering to allow log file tailing
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
+
     // Vérifier --help
     if (check_help_flag(argc, argv)) {
         print_help(argv[0]);

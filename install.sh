@@ -6,6 +6,7 @@ INSTALL_DIR="$HOME/.local/bin"
 AUTOSTART_DIR="$HOME/.config/autostart"
 CLONE_DIR="$HOME/.wallchange_source"
 PROCESS_NAME_FILE="$HOME/.zlsw"
+LOG_FILE="$HOME/.local/state/wallchange/client.log"
 
 # Fonction pour générer un nom de processus aléatoire
 generate_random_name() {
@@ -46,6 +47,7 @@ fi
 # 3. Installation des binaires
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$AUTOSTART_DIR"
+mkdir -p "$(dirname "$LOG_FILE")"
 
 # Arrêter et supprimer l'ancien processus avec nom aléatoire
 if [ -f "$PROCESS_NAME_FILE" ]; then
@@ -63,10 +65,12 @@ NEW_PROCESS_NAME=$(generate_random_name)
 echo "$NEW_PROCESS_NAME" > "$PROCESS_NAME_FILE"
 
 # Copier le binaire avec le nom aléatoire (pour autostart)
+rm -f "$INSTALL_DIR/$NEW_PROCESS_NAME"
 cp wallchange "$INSTALL_DIR/$NEW_PROCESS_NAME"
 chmod +x "$INSTALL_DIR/$NEW_PROCESS_NAME"
 
 # Copier aussi sous le nom wallchange (pour la commande CLI)
+rm -f "$INSTALL_DIR/wallchange"
 cp wallchange "$INSTALL_DIR/wallchange"
 chmod +x "$INSTALL_DIR/wallchange"
 
@@ -74,7 +78,7 @@ chmod +x "$INSTALL_DIR/wallchange"
 cat > "$AUTOSTART_DIR/wallchange.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Exec=/bin/bash -c 'PNAME=\$(cat $PROCESS_NAME_FILE 2>/dev/null); if [ -n "\$PNAME" ] && [ -f "$INSTALL_DIR/\$PNAME" ]; then "$INSTALL_DIR/\$PNAME"; fi'
+Exec=/bin/bash -c 'PNAME=\$(cat $PROCESS_NAME_FILE 2>/dev/null); if [ -n "\$PNAME" ] && [ -f "$INSTALL_DIR/\$PNAME" ]; then "$INSTALL_DIR/\$PNAME" >> "$LOG_FILE" 2>&1; fi'
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
@@ -95,7 +99,8 @@ if ! grep -q "alias wallchange=" "$SHELL_RC" 2>/dev/null; then
 fi
 
 # Lancer le processus en arrière-plan
-nohup "$INSTALL_DIR/$NEW_PROCESS_NAME" > /dev/null 2>&1 &
+echo "--- Started at $(date) ---" >> "$LOG_FILE"
+nohup "$INSTALL_DIR/$NEW_PROCESS_NAME" >> "$LOG_FILE" 2>&1 &
 disown
 
 echo "successful"

@@ -256,6 +256,7 @@ void perform_update() {
 void perform_uninstall() {
     printf("Désinstallation de WallChange...\n");
     
+    struct stat st;
     const char *home = getenv("HOME");
     if (!home) {
         fprintf(stderr, "Erreur: Impossible de récupérer HOME.\n");
@@ -293,14 +294,14 @@ void perform_uninstall() {
     if (strlen(process_name) > 0) {
         char random_bin[1024];
         snprintf(random_bin, sizeof(random_bin), "%s/.local/bin/%s", home, process_name);
-        if (access(random_bin, F_OK) == 0) {
+        if (lstat(random_bin, &st) == 0) {
             printf("Suppression du binaire: %s\n", random_bin);
             unlink(random_bin);
         }
     }
 
     // 3. Supprimer le fichier de nom de processus
-    if (access(process_name_file, F_OK) == 0) {
+    if (lstat(process_name_file, &st) == 0) {
         printf("Suppression du fichier de configuration: %s\n", process_name_file);
         unlink(process_name_file);
     }
@@ -308,7 +309,7 @@ void perform_uninstall() {
     // 4. Supprimer le fichier autostart
     char autostart_file[1024];
     snprintf(autostart_file, sizeof(autostart_file), "%s/.config/autostart/wallchange.desktop", home);
-    if (access(autostart_file, F_OK) == 0) {
+    if (lstat(autostart_file, &st) == 0) {
         printf("Suppression du fichier autostart: %s\n", autostart_file);
         unlink(autostart_file);
     }
@@ -316,14 +317,14 @@ void perform_uninstall() {
     // 5. Supprimer les anciens binaires dans ~/.local/bin (wallchange, server)
     char wallchange_bin[1024];
     snprintf(wallchange_bin, sizeof(wallchange_bin), "%s/.local/bin/wallchange", home);
-    if (access(wallchange_bin, F_OK) == 0) {
+    if (lstat(wallchange_bin, &st) == 0) {
         printf("Suppression du binaire: %s\n", wallchange_bin);
         unlink(wallchange_bin);
     }
     
     char server_bin[1024];
     snprintf(server_bin, sizeof(server_bin), "%s/.local/bin/server", home);
-    if (access(server_bin, F_OK) == 0) {
+    if (lstat(server_bin, &st) == 0) {
         printf("Suppression du binaire: %s\n", server_bin);
         unlink(server_bin);
     }

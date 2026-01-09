@@ -26,70 +26,63 @@ static time_t last_info_send = 0;
 static char client_token[256] = {0};  // Token reçu du serveur
 static const char *manual_token = NULL;  // Token manuel (env var)
 
-static int log_pipe[2] = {-1, -1};
-static int original_stdout = -1;
+static FILE *log_fp = NULL;
 static char log_buffer[4096];
 static size_t log_buffer_len = 0;
 static long long last_log_flush_ms = 0;
-static int original_stderr = -1;
+// static int original_stderr = -1; // Unused
 static int logging_enabled = 0;
 
-// Fonction pour rediriger stdout/stderr vers un pipe
+static char *get_log_file_path() {
+    static char path[1024];
+    const char *home = getenv("HOME");
+    if (home) {
+        snprintf(path, sizeof(path), "%s/.local/state/wallchange/client.log", home);
+        return path;
+    }
+    return NULL;
+}
+
+// Fonction pour commencer la lecture du fichier de log
 static void start_log_capture() {
     if (logging_enabled) return;
     
-    if (pipe(log_pipe) != 0) {
-        perror("pipe failed");
+    char *path = get_log_file_path();
+    if (!path) return;
+    
+    log_fp = fopen(path, "r");
+    if (!log_fp) {
+        // Le fichier n'existe peut-être pas encore, attendons
+        printf("Log file not found at %s\n", path);
         return;
     }
     
-    // Sauvegarder les descripteurs originaux
-    original_stdout = dup(STDOUT_FILENO);
-    original_stderr = dup(STDERR_FILENO);
-    
-    // Rendre le côté lecture non-bloquant
-    int flags = fcntl(log_pipe[0], F_GETFL, 0);
-    fcntl(log_pipe[0], F_SETFL, flags | O_NONBLOCK);
-    
-    // Rediriger stdout et stderr vers le côté écriture du pipe
-    dup2(log_pipe[1], STDOUT_FILENO);
-    dup2(log_pipe[1], STDERR_FILENO);
-    
-    // Désactiver le buffering pour que les logs partent tout de suite
-    setbuf(stdout, NULL);
-    setbuf(stderr, NULL);
+    // Si on veut vraiment "tout" partager, on commence au début.
+    // Mais si le fichier est énorme, attention.
+    // Supposons que c'est gérable ou que l'admin le veut.
+    rewind(log_fp);
     
     logging_enabled = 1;
-    
-    // Message de debug sur le stdout original
-    dprintf(original_stdout, "Log capture started. Output redirected to pipe.\n");
+    printf("Log capture started from file: %s\n", path);
 }
 
 static void stop_log_capture() {
     if (!logging_enabled) return;
     
-    // Restaurer stdout/stderr
-    dup2(original_stdout, STDOUT_FILENO);
-    dup2(original_stderr, STDERR_FILENO);
-    
-    close(original_stdout);
-    close(original_stderr);
-    close(log_pipe[0]);
-    close(log_pipe[1]);
+    if (log_fp) {
+        fclose(log_fp);
+        log_fp = NULL;
+    }
     
     logging_enabled = 0;
-    printf("Log capture stopped.\n");
+    // printf("Log capture stopped.\n"); // Avoid writing to log about log stopping which might confuse tail?
 }
+// pipe code cleanup
+
 
 // Fonction de log personnalisée pour Mongoose pour éviter la boucle infinie
 static void mg_log_wrapper(char ch, void *param) {
-    if (original_stdout != -1) {
-        if (write(original_stdout, &ch, 1) < 0) {
-            // Ignorer l'erreur d'écriture
-        }
-    } else {
-        putchar(ch);
-    }
+    putchar(ch);
 }
 
 // Chemin du fichier de token
@@ -530,19 +523,25 @@ void cleanup_network() {
 void network_poll(int timeout_ms) {
     mg_mgr_poll(&mgr, timeout_ms);
 
-    // Lire les logs du pipe et les envoyer (avec buffering)
-    if (logging_enabled && ws_conn != NULL && log_pipe[0] != -1) {
+    // Lire les logs du fichier et les envoyer (avec buffering)
+    if (logging_enabled && ws_conn != NULL && log_fp != NULL) {
         // Essayer de lire autant que possible sans bloquer
         while (log_buffer_len < sizeof(log_buffer) - 1) {
-            ssize_t n = read(log_pipe[0], log_buffer + log_buffer_len, sizeof(log_buffer) - 1 - log_buffer_len);
+            // Lecture non-bloquante ? fgets bloque...
+            // Mais fread aussi.
+            // On utilise fread et on compte sur le fait que OS buffer
+            // Si EOF, on s'arrête. Comme on est dans une boucle poll (qui tourne vite), 
+            // on ne veut pas bloquer si pas de data.
+            // Clearerr avant ?
+            
+            // Pour faire comme `tail -f`, on lit ce qui est dispo.
+            size_t n = fread(log_buffer + log_buffer_len, 1, sizeof(log_buffer) - 1 - log_buffer_len, log_fp);
+
             if (n > 0) {
-                // Echo local
-                if (original_stdout != -1) {
-                    if (write(original_stdout, log_buffer + log_buffer_len, n) < 0) {}
-                }
                 log_buffer_len += n;
             } else {
-                // n == 0 (EOF) ou n == -1 (EAGAIN/Error)
+                // n == 0 (EOF ou erreur)
+                clearerr(log_fp); // Clear EOF flag to enable reading new data next time
                 break;
             }
         }
