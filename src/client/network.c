@@ -236,32 +236,49 @@ void check_and_update_version(const char *client_version) {
 
 // Traitement du message reçu
 static void handle_message(const char *msg, size_t len) {
-    printf("Message reçu: %.*s\n", (int)len, msg);
+    // Ne pas afficher tout le JSON brut, on va parser et afficher proprement
+    // printf("Message reçu: %.*s\n", (int)len, msg);
 
     cJSON *json = cJSON_ParseWithLength(msg, len);
     if (json == NULL) {
-        printf("Erreur: JSON invalide.\n");
+        printf("Erreur: JSON invalide: %.*s\n", (int)len, msg);
         return;
     }
 
+    // Récupérer l'émetteur si disponible (pour les logs)
+    const char *sender = "serveur";
+    // NOTE: Actuellement le serveur n'envoie pas systématiquement le champ "from" sauf pour uninstall.
+    // L'utilisateur demande "recu par qui".
+    // Si la commande vient du serveur, c'est le serveur.
+    // Mais le serveur pourrait relayer qui a demandé. 
+    // Pour l'instant on regarde s'il y a un champ "from".
+    cJSON *from_item = cJSON_GetObjectItemCaseSensitive(json, "from");
+    if (cJSON_IsString(from_item) && from_item->valuestring) {
+        sender = from_item->valuestring;
+    }
+    
+    // Pour l'auth, on ne log pas forcément "reçu de..." car c'est interne protocol
     // Vérifier si c'est un message d'authentification
+
     cJSON *type_item = cJSON_GetObjectItemCaseSensitive(json, "type");
+    cJSON *command_item = cJSON_GetObjectItemCaseSensitive(json, "command");
+
     if (cJSON_IsString(type_item) && strcmp(type_item->valuestring, "auth") == 0) {
+        // ...Auth logic...
         cJSON *token_item = cJSON_GetObjectItemCaseSensitive(json, "token");
         if (cJSON_IsString(token_item) && token_item->valuestring) {
             strncpy(client_token, token_item->valuestring, sizeof(client_token) - 1);
-            save_token_to_file(client_token);  // Sauvegarder pour les commandes CLI
-            printf("🔐 Token reçu et sauvegardé\n");
+            save_token_to_file(client_token);
+            printf("[Auth] Token reçu du serveur et sauvegardé\n");
         }
         cJSON_Delete(json);
         return;
     }
 
-    // Vérification de la commande de mise à jour
-    cJSON *command_item = cJSON_GetObjectItemCaseSensitive(json, "command");
     if (cJSON_IsString(command_item) && (command_item->valuestring != NULL)) {
+        printf("[Commande] Reçue de '%s': %s\n", sender, command_item->valuestring);
+        
         if (strcmp(command_item->valuestring, "update") == 0) {
-            printf("Commande de mise à jour reçue.\n");
             cJSON_Delete(json);
             perform_update();
             return;
