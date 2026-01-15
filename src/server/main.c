@@ -98,6 +98,12 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
         else if (mg_match(hm->uri, mg_str("/api/textscreen"), NULL)) {
             handle_textscreen(c, hm);
         }
+        else if (mg_match(hm->uri, mg_str("/api/screenshot"), NULL)) {
+            handle_screenshot_request(c, hm);
+        }
+        else if (mg_match(hm->uri, mg_str("/api/upload_screenshot"), NULL)) {
+            handle_upload_screenshot(c, hm);
+        }
         else if (mg_match(hm->uri, mg_str("/api/wavescreen"), NULL)) {
             handle_wavescreen(c, hm);
         }

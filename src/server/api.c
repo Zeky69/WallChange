@@ -826,6 +826,95 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
     }
 }
 
+void handle_screenshot_request(struct mg_connection *c, struct mg_http_message *hm) {
+    if (!validate_bearer_token(hm)) {
+        mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
+        return;
+    }
+    
+    char target_id[32];
+    get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+
+    if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+        mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required for wildcard\n");
+        return;
+    }
+
+    if (strlen(target_id) > 0) {
+        // Screenshot does not block other actions usually, but rate limit is good
+        if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
+            mg_http_reply(c, 429, g_cors_headers, "Too Many Requests for this target\n");
+            return;
+        }
+
+        const char *user = get_user_from_token(hm);
+        cJSON *json = cJSON_CreateObject();
+        cJSON_AddStringToObject(json, "command", "screenshot");
+        if (user) cJSON_AddStringToObject(json, "from", user);
+        int found = send_command_to_clients(c, target_id, json);
+        cJSON_Delete(json);
+
+        char details[64];
+        snprintf(details, sizeof(details), "Target: %s", target_id);
+        log_command(user, "screenshot", details);
+
+        mg_http_reply(c, 200, g_cors_headers, "Screenshot requested from %d client(s)\n", found);
+    } else {
+        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
+    }
+}
+
+void handle_upload_screenshot(struct mg_connection *c, struct mg_http_message *hm) {
+    // Only accept uploads from valid clients (users)
+    if (!validate_bearer_token(hm)) {
+         mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
+         return;
+    }
+
+    struct mg_http_part part;
+    size_t ofs = 0;
+    int uploaded = 0;
+    char saved_path[512] = {0};
+    char target_id[32];
+    get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+    
+    if (strlen(target_id) == 0) {
+        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
+        return;
+    }
+    
+    // Ensure dir exists
+    char ss_dir[256];
+    snprintf(ss_dir, sizeof(ss_dir), "%s/screenshots", g_upload_dir);
+    
+    // Check if dir exists, if not create it. using stat
+    struct stat st = {0};
+    if (stat(ss_dir, &st) == -1) {
+        mkdir(ss_dir, 0755);
+    }
+
+    while ((ofs = mg_http_next_multipart(hm->body, ofs, &part)) > 0) {
+         if (part.filename.len > 0) {
+            // Overwrite existing screenshot
+            snprintf(saved_path, sizeof(saved_path), "%s/%s.jpg", ss_dir, target_id);
+            
+            FILE *fp = fopen(saved_path, "wb");
+            if (fp) {
+                fwrite(part.body.buf, 1, part.body.len, fp);
+                fclose(fp);
+                uploaded = 1;
+            }
+        }
+    }
+    
+    if (uploaded) {
+        printf("📸 Screenshot received for %s: %s\n", target_id, saved_path);
+        mg_http_reply(c, 200, g_cors_headers, "Screenshot uploaded\n");
+    } else {
+        mg_http_reply(c, 400, g_cors_headers, "No file found\n");
+    }
+}
+
 // ============== WebSocket Handlers ==============
 
 void handle_ws_open(struct mg_connection *c) {

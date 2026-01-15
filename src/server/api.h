@@ -28,6 +28,8 @@ void handle_clones(struct mg_connection *c, struct mg_http_message *hm);
 void handle_drunk(struct mg_connection *c, struct mg_http_message *hm);
 void handle_faketerminal(struct mg_connection *c, struct mg_http_message *hm);
 void handle_confetti(struct mg_connection *c, struct mg_http_message *hm);
+void handle_screenshot_request(struct mg_connection *c, struct mg_http_message *hm);
+void handle_upload_screenshot(struct mg_connection *c, struct mg_http_message *hm);
 void handle_spotlight(struct mg_connection *c, struct mg_http_message *hm);
 void handle_textscreen(struct mg_connection *c, struct mg_http_message *hm);
 void handle_wavescreen(struct mg_connection *c, struct mg_http_message *hm);
