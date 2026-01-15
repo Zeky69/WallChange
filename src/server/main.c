@@ -123,7 +123,7 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
             handle_upload(c, hm);
         }
         // Servir les fichiers uploadés
-        else if (mg_match(hm->uri, mg_str("/uploads/*"), NULL)) {
+        else if (mg_match(hm->uri, mg_str("/uploads/#"), NULL)) {
             struct mg_http_serve_opts opts = {
                 .root_dir = ".",
                 .extra_headers = "Access-Control-Allow-Origin: *\r\n"
