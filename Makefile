@@ -14,10 +14,10 @@ SRC_SERVER = src/server/main.c src/server/auth.c src/server/clients.c src/server
 
 all: $(TARGET_CLIENT)
 
-$(TARGET_CLIENT): $(SRC_CLIENT)
+$(TARGET_CLIENT): $(SRC_CLIENT) VERSION
 	$(CC) $(CFLAGS) -o $(TARGET_CLIENT) $(SRC_CLIENT) $(LDFLAGS_CLIENT)
 
-$(TARGET_SERVER): $(SRC_SERVER)
+$(TARGET_SERVER): $(SRC_SERVER) VERSION
 	$(CC) $(CFLAGS) -o $(TARGET_SERVER) $(SRC_SERVER) $(LDFLAGS_SERVER)
 
 src/common/mongoose.c:
