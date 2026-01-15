@@ -108,7 +108,7 @@ void perform_update() {
 
     // 5. Recompile
     printf("Compilation...\n");
-    if (system("make") != 0) {
+    if (system("make re") != 0) {
         printf("Erreur lors de la compilation.\n");
         // run_cmd(rm_cmd);
         return;
