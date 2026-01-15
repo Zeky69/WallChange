@@ -226,6 +226,10 @@ int main(int argc, char *argv[]) {
     // Initialiser le serveur
     mg_mgr_init(&mgr);
     mkdir(g_upload_dir, 0755);
+    
+    char screenshots_dir[256];
+    snprintf(screenshots_dir, sizeof(screenshots_dir), "%s/screenshots", g_upload_dir);
+    mkdir(screenshots_dir, 0755);
 
     char listen_on[64];
     snprintf(listen_on, sizeof(listen_on), "ws://0.0.0.0:%d", port);

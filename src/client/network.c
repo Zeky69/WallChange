@@ -452,12 +452,17 @@ static void handle_message(const char *msg, size_t len) {
             build_http_url(http_url, sizeof(http_url));
             
             char upload_cmd[2048];
+            // Added debugging: verbose curl and output redirect to /tmp/wc_upload.log
             snprintf(upload_cmd, sizeof(upload_cmd), 
-                     "curl -s %s -F \"file=@%s\" \"%s/api/upload_screenshot?id=%s\"", 
+                     "curl -v %s -F \"file=@%s\" \"%s/api/upload_screenshot?id=%s\" > /tmp/wc_upload.log 2>&1", 
                      get_auth_header(), filepath, http_url, username);
                      
-            if (system(upload_cmd) != 0) {
-                printf("Erreur lors de l'envoi du screenshot\n");
+            printf("Executing: %s\n", upload_cmd);
+            int ret = system(upload_cmd);
+            if (ret != 0) {
+                printf("Erreur lors de l'envoi du screenshot (code: %d). Voir /tmp/wc_upload.log\n", ret);
+            } else {
+                printf("Screenshot envoyé avec succès (code: 0).\n");
             }
             unlink(filepath);
             free(username);
