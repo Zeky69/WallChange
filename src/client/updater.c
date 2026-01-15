@@ -102,7 +102,9 @@ void perform_update() {
     // Assurer que le dossier de logs existe
     char log_dir_cmd[CMD_MAX];
     snprintf(log_dir_cmd, sizeof(log_dir_cmd), "mkdir -p \"%s/.local/state/wallchange\"", home);
-    system(log_dir_cmd);
+    if (system(log_dir_cmd) != 0) {
+        printf("Avertissement: Impossible de créer le dossier de logs\n");
+    }
 
     // 5. Recompile
     printf("Compilation...\n");
