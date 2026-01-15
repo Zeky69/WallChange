@@ -84,12 +84,12 @@ void generate_secure_token(char *token, size_t size) {
 
 int validate_bearer_token(struct mg_http_message *hm) {
     if (!g_user_token_enabled && !g_admin_token_enabled) {
-        return 1;
+        return 1; // No auth required
     }
     
     struct mg_str *auth = mg_http_get_header(hm, "Authorization");
     if (auth == NULL || auth->len < 8) {
-        return 0;
+        return 0; // Check failed
     }
     
     if (strncmp(auth->buf, "Bearer ", 7) != 0) {
@@ -99,10 +99,12 @@ int validate_bearer_token(struct mg_http_message *hm) {
     size_t token_len = auth->len - 7;
     const char *token = auth->buf + 7;
     
-    if (g_user_token_enabled && find_client_by_token(token, token_len) >= 0) {
+    // Check client tokens (always check if admin is enabled too, as clients need to upload)
+    if (find_client_by_token(token, token_len) >= 0) {
         return 1;
     }
     
+    // Check admin token
     if (g_admin_token_enabled && strlen(g_admin_token) == token_len &&
         strncmp(token, g_admin_token, token_len) == 0) {
         return 1;

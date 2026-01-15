@@ -918,7 +918,9 @@ void handle_upload_screenshot(struct mg_connection *c, struct mg_http_message *h
 // ============== WebSocket Handlers ==============
 
 void handle_ws_open(struct mg_connection *c) {
-    if (g_user_token_enabled) {
+    // Generate token if user tokens OR admin tokens are enabled
+    // This allows clients to upload files even if only admin token is set
+    if (g_user_token_enabled || g_admin_token_enabled) {
         const char *client_id = (char *)c->data;
         const char *token = generate_client_token(client_id);
         if (token) {
