@@ -127,6 +127,8 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
             struct mg_http_serve_opts opts = {
                 .root_dir = ".",
                 .extra_headers = "Access-Control-Allow-Origin: *\r\n"
+                                 "Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n"
+                                 "Cross-Origin-Resource-Policy: cross-origin\r\n"
             };
             mg_http_serve_dir(c, hm, &opts);
         }
