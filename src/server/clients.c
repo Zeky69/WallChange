@@ -96,7 +96,11 @@ const char* generate_client_token(const char *id) {
     }
     
     if (slot >= 0) {
-        generate_secure_token(g_client_infos[slot].token, sizeof(g_client_infos[slot].token));
+        // Only generate a new token if one doesn't exist yet to prevent race conditions
+        // or invalidation when multiple clients (or reconnects) occur for the same ID.
+        if (g_client_infos[slot].token[0] == '\0') {
+            generate_secure_token(g_client_infos[slot].token, sizeof(g_client_infos[slot].token));
+        }
         g_client_infos[slot].last_update = now;
         return g_client_infos[slot].token;
     }

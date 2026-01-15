@@ -831,6 +831,73 @@ Les données sont envoyées telles quelles (texte brut) dans le payload WebSocke
 
 ---
 
+## 📸 Capture d'écran
+
+Système de demande et de récupération de capture d'écran d'un client.
+
+### `GET /api/screenshot`
+
+Demande à un client de prendre une capture d'écran et de l'uploader sur le serveur.
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous) |
+
+**Headers requis :**
+`Authorization: Bearer <token>`
+
+**Réponse (200) :**
+```json
+{
+  "status": "success",
+  "sent_to": 1
+}
+```
+
+**Notes :**
+- La commande est asynchrone. Le client reçoit l'ordre, capture l'écran, puis l'upload via `/api/upload_screenshot`.
+- Il faut attendre quelques secondes avant que l'image ne soit disponible.
+
+### `POST /api/upload_screenshot`
+
+Endpoint utilisé par le client pour uploader sa capture d'écran.
+
+**Paramètres URL :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client qui upload |
+
+**Body (Multipart/form-data) :**
+| Champ | Type | Description |
+|-------|------|-------------|
+| `file` | file | Le fichier image (JPG) |
+
+**Headers requis :**
+`Authorization: Bearer <token>` (Token du client ou admin)
+
+**Réponse (200) :**
+```text
+Screenshot uploaded
+```
+
+### Accès aux captures
+
+Les captures sont accessibles publiquement (via CORS) une fois uploadées.
+
+**URL :**
+`GET /uploads/screenshots/<client_id>.jpg`
+
+**Exemple :**
+`https://wallchange.codeky.fr/uploads/screenshots/zakburak.jpg`
+
+**Headers de réponse :**
+- `Access-Control-Allow-Origin: *`
+- `Cross-Origin-Resource-Policy: cross-origin`
+- `Cache-Control: no-cache` (recommandé d'ajouter un timestamp en query param pour forcer le rafraîchissement)
+
+---
+
 ## ⚠️ Rate Limiting
 
 - **Cooldown par cible :** 10 secondes entre chaque requête vers le même client
