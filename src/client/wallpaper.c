@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
 static void run_cmd(const char *cmd) {
     int ret = system(cmd);
     (void)ret;
@@ -73,4 +76,55 @@ void set_wallpaper(const char *filepath) {
     }
     
     printf("Tentative de changement de fond d'écran terminée.\n");
+}
+
+void apply_wallpaper_effect(const char *filepath, const char *effect, int value) {
+    if (!effect || strlen(effect) == 0) return;
+
+    printf("Application de l'effet '%s' (valeur: %d) sur %s...\n", effect, value, filepath);
+
+    int w, h, channels;
+    unsigned char *data = load_image(filepath, &w, &h, &channels);
+    if (!data) {
+        fprintf(stderr, "Erreur: Impossible de charger l'image pour l'effet.\n");
+        return;
+    }
+
+    int applied = 0;
+    if (strcmp(effect, "pixelate") == 0) {
+        if (value < 2) value = 10;
+        apply_pixelate(data, w, h, channels, value);
+        applied = 1;
+    } else if (strcmp(effect, "blur") == 0) {
+        if (value < 1) value = 5;
+        // Blur value needs calibration usually, 5 is visible
+        if (apply_blur(data, w, h, channels, value)) {
+            applied = 1;
+        }
+    } else if (strcmp(effect, "invert") == 0) {
+        apply_invert(data, w, h, channels);
+        applied = 1;
+    }
+
+    if (applied) {
+        char temp_path[2048];
+        snprintf(temp_path, sizeof(temp_path), "%s.tmp.jpg", filepath);
+        
+        // Save quality 95
+        if (stbi_write_jpg(temp_path, w, h, channels, data, 95)) {
+            if (rename(temp_path, filepath) != 0) {
+                // Si rename échoue (cross-device), mv simple
+                char cmd[2048 * 2];
+                snprintf(cmd, sizeof(cmd), "mv '%s' '%s'", temp_path, filepath);
+                run_cmd(cmd);
+            }
+            printf("Effet appliqué avec succès.\n");
+        } else {
+            fprintf(stderr, "Erreur lors de la sauvegarde de l'image modifiée.\n");
+        }
+    } else {
+        printf("Aucun effet appliqué (paramètres incorrects ou non reconnu).\n");
+    }
+
+    free_image(data);
 }

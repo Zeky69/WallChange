@@ -126,9 +126,13 @@ void handle_send(struct mg_connection *c, struct mg_http_message *hm) {
     
     char target_id[32];
     char url[512];
+    char effect[32] = {0};
+    char value_str[16] = {0};
     
     get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
     get_qs_var(&hm->query, "url", url, sizeof(url));
+    get_qs_var(&hm->query, "effect", effect, sizeof(effect));
+    get_qs_var(&hm->query, "value", value_str, sizeof(value_str));
     
     if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
         mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required for wildcard\n");
@@ -144,6 +148,12 @@ void handle_send(struct mg_connection *c, struct mg_http_message *hm) {
         const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "url", url);
+        if (strlen(effect) > 0) {
+            cJSON_AddStringToObject(json, "effect", effect);
+            if (strlen(value_str) > 0) {
+                cJSON_AddNumberToObject(json, "value", atoi(value_str));
+            }
+        }
         if (user) cJSON_AddStringToObject(json, "from", user);
         
         int found = send_command_to_clients(c, target_id, json);
@@ -780,8 +790,13 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
     if (uploaded) {
         char target_id[32];
         char type[32] = {0};
+        char effect[32] = {0};
+        char value_str[16] = {0};
+
         get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
         get_qs_var(&hm->query, "type", type, sizeof(type));
+        get_qs_var(&hm->query, "effect", effect, sizeof(effect));
+        get_qs_var(&hm->query, "value", value_str, sizeof(value_str));
         
         if (strlen(target_id) > 0) {
             if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
@@ -809,6 +824,14 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
                 cJSON_AddStringToObject(json, "command", "particles");
             }
             cJSON_AddStringToObject(json, "url", full_url);
+
+            if (strlen(effect) > 0) {
+                cJSON_AddStringToObject(json, "effect", effect);
+                if (strlen(value_str) > 0) {
+                    cJSON_AddNumberToObject(json, "value", atoi(value_str));
+                }
+            }
+
             int found = send_command_to_clients(c, target_id, json);
             cJSON_Delete(json);
             

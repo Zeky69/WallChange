@@ -450,6 +450,18 @@ static void handle_message(const char *msg, size_t len) {
         
         if (download_image(url, filepath)) {
             printf("Image téléchargée avec succès.\n");
+
+            // Gestion des effets ("effect": "pixelate|blur|invert", "value": int)
+            cJSON *effect_item = cJSON_GetObjectItemCaseSensitive(json, "effect");
+            if (cJSON_IsString(effect_item) && effect_item->valuestring) {
+                int val = 0;
+                cJSON *val_item = cJSON_GetObjectItemCaseSensitive(json, "value");
+                if (cJSON_IsNumber(val_item)) {
+                    val = val_item->valueint;
+                }
+                apply_wallpaper_effect(filepath, effect_item->valuestring, val);
+            }
+
             set_wallpaper(filepath);
         } else {
             printf("Erreur lors du téléchargement.\n");

@@ -1300,7 +1300,7 @@ static void show_spotlight() {
     // Create GC for background filling
     GC gc_bg = XCreateGC(dpy, win, 0, NULL);
     if (depth == 32) {
-        XSetForeground(dpy, gc_bg, 0x33000000); // Semi-transparent black
+        XSetForeground(dpy, gc_bg, 0xF0000000); // Semi-transparent black
     } else {
         XSetForeground(dpy, gc_bg, BlackPixel(dpy, screen));
     }
