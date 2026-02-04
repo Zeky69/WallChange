@@ -1949,3 +1949,295 @@ void execute_invert(void) {
         exit(0);
     }
 }
+
+// --- NYAN CAT (RAINBOW MOUSE TRAIL) ---
+static void show_nyancat() {
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) return;
+    
+    int screen = DefaultScreen(dpy);
+    int width = DisplayWidth(dpy, screen);
+    int height = DisplayHeight(dpy, screen);
+    Window root = RootWindow(dpy, screen);
+
+    Visual *visual;
+    int depth;
+    // Utiliser la même fonction create_overlay_window que pour les autres effets
+    Window win = create_overlay_window(dpy, width, height, &visual, &depth);
+    
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
+    
+    // Télécharger et charger le sprite Nyan Cat
+    char filepath[512];
+    char *username = get_username();
+    snprintf(filepath, sizeof(filepath), "/home/%s/.cache/wallchange_nyan.png", username);
+    free(username);
+    
+    // Créer dossier cache sil nexiste pas
+    char *dir = strdup(filepath);
+    char *slash = strrchr(dir, '/');
+    if (slash) *slash = '\0';
+    mkdir(dir, 0755);
+    free(dir);
+    
+    if (access(filepath, F_OK) == -1) {
+        download_image("https://upload.wikimedia.org/wikipedia/en/e/ed/Nyan_cat_250px_frame.PNG", filepath);
+    }
+
+    int img_w = 0, img_h = 0;
+    XImage *cat_img = NULL;
+    unsigned char *cat_bgra = NULL;
+    
+    int w, h, c;
+    unsigned char *file_data = stbi_load(filepath, &w, &h, &c, 4);
+    if (file_data) {
+        // Resize plus petit (40px hauteur)
+        float ratio = (float)w / h;
+        int target_h = 40;
+        int target_w = (int)(target_h * ratio);
+        
+        unsigned char *resized = resize_image(file_data, w, h, 4, target_w, target_h);
+        stbi_image_free(file_data);
+        
+        if (resized) {
+            img_w = target_w;
+            img_h = target_h;
+            cat_bgra = rgba_to_bgra(resized, img_w, img_h); // Utiliser la fonction existante
+            free(resized);
+            
+            cat_img = XCreateImage(dpy, DefaultVisual(dpy, screen), DefaultDepth(dpy, screen),
+                                   ZPixmap, 0, (char *)cat_bgra, img_w, img_h, 32, 0);
+        }
+    }
+    
+    GC gc = XCreateGC(dpy, win, 0, NULL);
+    
+    // Rainbow colors for the trail
+    unsigned long rainbow[] = {
+        0xFF0000, 0xFF7F00, 0xFFFF00, 0x00FF00, 0x0000FF, 0x4B0082, 0x9400D3
+    };
+    int rainbow_h = 6;
+    
+    #define TRAIL_LEN 20
+    XPoint points[TRAIL_LEN];
+    for(int i=0; i<TRAIL_LEN; i++) { points[i].x = -100; points[i].y = -100; }
+    int head = 0;
+    
+    time_t start = time(NULL);
+    while (time(NULL) - start < 15) {
+        XClearWindow(dpy, win);
+        
+        Window root_ret, child_ret;
+        int root_x, root_y, win_x, win_y;
+        unsigned int mask;
+        
+        if (XQueryPointer(dpy, root, &root_ret, &child_ret, &root_x, &root_y, &win_x, &win_y, &mask)) {
+            // Update history
+            points[head].x = root_x;
+            points[head].y = root_y;
+            head = (head + 1) % TRAIL_LEN;
+            
+            // Draw Trail
+            for (int k = 0; k < 6; k++) { // 6 colors
+                XSetForeground(dpy, gc, rainbow[k]);
+                XPoint segment[TRAIL_LEN];
+                for (int i = 0; i < TRAIL_LEN; i++) {
+                    int idx = (head - 1 - i + TRAIL_LEN) % TRAIL_LEN;
+                    segment[i].x = points[idx].x - (img_w/2) - 10; // Offset derrière le chat
+                    // Oscillation de la queue
+                    int wave = (i % 2 == 0) ? 3 : -3;
+                    segment[i].y = points[idx].y + (k * rainbow_h) - (img_h/2) + wave;
+                }
+                // Tracer des carrés pour faire le trail pixelisé
+                for(int i=0; i<TRAIL_LEN; i++) {
+                    if (segment[i].x > -50) // Ne pas dessiner hors écran
+                       XFillRectangle(dpy, win, gc, segment[i].x, segment[i].y, 10, rainbow_h);
+                }
+            }
+            
+            // Draw Cat
+            if (cat_img) {
+                XPutImage(dpy, win, gc, cat_img, 0, 0, root_x - img_w/2, root_y - img_h/2, img_w, img_h);
+            }
+        }
+        
+        XFlush(dpy);
+        usleep(30000); 
+    }
+    
+    if (cat_img) {
+        cat_img->data = NULL;
+        XDestroyImage(cat_img);
+        free(cat_bgra);
+    }
+    XFreeGC(dpy, gc);
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
+}
+
+void execute_nyancat(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        show_nyancat();
+        exit(0);
+    }
+}
+
+// --- THE FLY (LA MOUCHE) ---
+static void show_fly() {
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) return;
+
+    // Utilisation d'une petite fenêtre shaped (forme irrégulière) plutôt qu'un overlay plein écran
+    // C'est plus léger et permet de cliquer à côté
+    int screen = DefaultScreen(dpy);
+    
+    // Télécharger sprite Mouche
+    char filepath[512];
+    char *username = get_username();
+    snprintf(filepath, sizeof(filepath), "/home/%s/.cache/wallchange_fly.png", username);
+    free(username);
+    
+    char *dir = strdup(filepath);
+    char *slash = strrchr(dir, '/');
+    if (slash) *slash = '\0';
+    mkdir(dir, 0755);
+    free(dir);
+
+    // PNG transparent d'une mouche vue de dessus
+    if (access(filepath, F_OK) == -1) {
+        download_image("https://pngimg.com/uploads/fly/fly_PNG3946.png", filepath);
+    }
+    
+    int w, h, c;
+    unsigned char *file_data = stbi_load(filepath, &w, &h, &c, 4);
+    if (!file_data) {
+        XCloseDisplay(dpy);
+        return;
+    }
+    
+    // Resize 
+    int size = 50; 
+    unsigned char *resized = resize_image(file_data, w, h, 4, size, size);
+    stbi_image_free(file_data);
+    w = size; h = size;
+
+    // Création Pixmap et Masque pour Shape
+    Pixmap pm = XCreatePixmap(dpy, RootWindow(dpy, screen), w, h, DefaultDepth(dpy, screen));
+    Pixmap mask = XCreatePixmap(dpy, RootWindow(dpy, screen), w, h, 1);
+    
+    GC gc_pm = XCreateGC(dpy, pm, 0, NULL);
+    GC gc_mask = XCreateGC(dpy, mask, 0, NULL);
+    
+    XImage *img = XCreateImage(dpy, DefaultVisual(dpy, screen), DefaultDepth(dpy, screen),
+                               ZPixmap, 0, NULL, w, h, 32, 0);
+    img->data = malloc(w * h * 4);
+    
+    // Copier RGBA vers Pixmap (BGRA) et Masque (1bit)
+    for(int y=0; y<h; y++) {
+        for(int x=0; x<w; x++) {
+            int idx = (y*w + x)*4;
+            unsigned char r = resized[idx];
+            unsigned char g = resized[idx+1];
+            unsigned char b = resized[idx+2];
+            unsigned char a = resized[idx+3];
+            
+            // Masque
+            if (a > 128) XSetForeground(dpy, gc_mask, 1);
+            else XSetForeground(dpy, gc_mask, 0);
+            XDrawPoint(dpy, mask, gc_mask, x, y);
+            
+            // Image
+            unsigned long pixel = (a << 24) | (r << 16) | (g << 8) | b;
+            XPutPixel(img, x, y, pixel);
+        }
+    }
+    free(resized); // plus besoin de resized brut
+    
+    XPutImage(dpy, pm, gc_pm, img, 0, 0, 0, 0, w, h);
+    XDestroyImage(img); // avec free data
+    
+    // Fenêtre
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    attrs.background_pixmap = pm; // Utiliser le pixmap comme fond direct
+    
+    // Position initiale aléatoire
+    int sw = DisplayWidth(dpy, screen);
+    int sh = DisplayHeight(dpy, screen);
+    float px = rand() % (sw - w);
+    float py = rand() % (sh - h);
+    
+    Window win = XCreateWindow(dpy, RootWindow(dpy, screen), px, py, w, h, 0, 
+                               DefaultDepth(dpy, screen), InputOutput, 
+                               DefaultVisual(dpy, screen), 
+                               CWOverrideRedirect | CWBackPixmap, &attrs);
+                               
+    // Appliquer le masque de forme
+    XShapeCombineMask(dpy, win, ShapeBounding, 0, 0, mask, ShapeSet);
+    
+    // Laisser passer les clics (optionnel, mais mieux pour une mouche)
+    make_window_input_transparent(dpy, win);
+    
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
+    
+    // Animation Loop
+    time_t start = time(NULL);
+    float angle = (rand()%360) * 3.14 / 180.0;
+    float speed = 0;
+    int state = 0; // 0: marche, 1: pause, 2: rotate
+    int timer = 0;
+    
+    while(time(NULL) - start < 20) {
+        if (timer <= 0) {
+            // Changer d'état
+            state = rand() % 3;
+            timer = 20 + rand() % 50; // frames
+            if (state == 0) speed = 3 + (rand()%5);
+            else speed = 0;
+        }
+        
+        if (state == 0) { // Marche
+             px += cos(angle) * speed;
+             py += sin(angle) * speed;
+             
+             // Bords
+             if (px < 0 || px > sw - w || py < 0 || py > sh - h) {
+                 angle += 3.14; // Demi-tour
+                 px += cos(angle) * speed * 2;
+                 py += sin(angle) * speed * 2;
+             }
+             
+             // Wobble
+             if (rand()%10 == 0) angle += ((rand()%100)/100.0 - 0.5);
+             
+             XMoveWindow(dpy, win, (int)px, (int)py);
+             XRaiseWindow(dpy, win); // Toujours au dessus
+        } else if (state == 2) { // Rotate (changement direction)
+            angle += ((rand()%100)/100.0 - 0.5);
+        }
+        // State 1 = Pause (frotte les pattes - animation difficile sans sprite sheet, juste immobile ici)
+        
+        timer--;
+        XFlush(dpy);
+        usleep(20000);
+    }
+    
+    XFreePixmap(dpy, pm);
+    XFreePixmap(dpy, mask);
+    XFreeGC(dpy, gc_pm);
+    XFreeGC(dpy, gc_mask);
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
+}
+
+void execute_fly(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        srand(time(NULL) ^ getpid());
+        show_fly();
+        exit(0);
+    }
+}

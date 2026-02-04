@@ -20,6 +20,8 @@ void execute_wavescreen(void);
 void execute_dvdbounce(const char *url);
 void execute_fireworks(void);
 void execute_lock(void);
+void execute_nyancat(void);
+void execute_fly(void);
 void execute_invert(void);
 
 #endif
