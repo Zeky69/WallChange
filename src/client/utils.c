@@ -2021,14 +2021,18 @@ static void show_nyancat() {
     };
     int rainbow_h = 6;
     
-    // Augmenter la taille du trail pour qu'il ne disparaisse pas (Paint style)
-    // 15 secondes * 40 FPS approx = 600 points
-    #define TRAIL_LEN 800
+    // Augmenter la capacité pour l'interpolation (15s de trail fluide)
+    #define TRAIL_LEN 5000
     XPoint points[TRAIL_LEN];
+    // Initialiser hors écran
     for(int i=0; i<TRAIL_LEN; i++) { points[i].x = -10000; points[i].y = -10000; }
+    
     int head = 0;
     int point_count = 0;
     
+    // Pour l'interpolation
+    int prev_x = -1, prev_y = -1;
+
     time_t start = time(NULL);
     // Boucle de 15 secondes
     while (time(NULL) - start < 15) {
@@ -2039,11 +2043,34 @@ static void show_nyancat() {
         unsigned int mask;
         
         if (XQueryPointer(dpy, root, &root_ret, &child_ret, &root_x, &root_y, &win_x, &win_y, &mask)) {
-            // Update history
-            points[head].x = root_x;
-            points[head].y = root_y;
-            head = (head + 1) % TRAIL_LEN;
-            if (point_count < TRAIL_LEN) point_count++;
+            
+            // Interpolation pour combler les trous si la souris bouge vite
+            if (prev_x != -1) {
+                float dx = root_x - prev_x;
+                float dy = root_y - prev_y;
+                float dist = sqrt(dx*dx + dy*dy);
+                
+                // On ajoute un point tous les 5 pixels environ
+                int steps = (int)(dist / 5.0f); 
+                if (steps < 1) steps = 1;
+                
+                for (int s = 1; s <= steps; s++) {
+                    float t = (float)s / steps;
+                    points[head].x = (short)(prev_x + dx * t);
+                    points[head].y = (short)(prev_y + dy * t);
+                    head = (head + 1) % TRAIL_LEN;
+                    if (point_count < TRAIL_LEN) point_count++;
+                }
+            } else {
+                // Premier point
+                points[head].x = root_x;
+                points[head].y = root_y;
+                head = (head + 1) % TRAIL_LEN;
+                if (point_count < TRAIL_LEN) point_count++;
+            }
+            
+            prev_x = root_x;
+            prev_y = root_y;
             
             // Draw Trail
             for (int k = 0; k < 6; k++) { // 6 colors
@@ -2052,18 +2079,25 @@ static void show_nyancat() {
                 // Dessiner tous les points accumulés
                 for (int i = 0; i < point_count; i++) {
                     // On remonte le temps depuis head
+                    // head pointe vers la prochaine case vide, donc head-1 est le dernier ajouté
                     int idx = (head - 1 - i + TRAIL_LEN) % TRAIL_LEN;
                     
-                    if (points[idx].x < -500) continue;
+                    if (points[idx].x < -5000) continue;
 
                     int x = points[idx].x - (img_w/2) - 10; // Offset derrière le chat
                     
-                    // Oscillation de la queue (basée sur l'index 'i' qui représente le temps passé)
-                    int wave = (i % 4 < 2) ? 3 : -3; 
+                    // Oscillation de la queue 
+                    // i représente l'index temporel (plus i est grand, plus c'est vieux)
+                    // On divise i par (steps/frames) pour avoir une fréquence stable visualement ?
+                    // Simplifions : oscillation tous les X points. Si on a 5px par point, 
+                    // une onde de nyan cat fait env 40-50px. Donc cycle de 10 points.
+                    int wave_phase = (i / 8) % 2; 
+                    int wave = (wave_phase == 0) ? 3 : -3;
+                    
                     int y = points[idx].y + (k * rainbow_h) - (img_h/2) + wave;
                     
-                    // Rectangle de traînée
-                    XFillRectangle(dpy, win, gc, x, y, 12, rainbow_h);
+                    // Rectangle un peu plus large (6px) pour bien recouvrir l'espace de 5px entre points
+                    XFillRectangle(dpy, win, gc, x, y, 8, rainbow_h);
                 }
             }
             
@@ -2074,7 +2108,7 @@ static void show_nyancat() {
         }
         
         XFlush(dpy);
-        usleep(25000); // ~40 FPS
+        usleep(16000); // 60 FPS pour plus de fluidité
     }
     
     if (cat_img) {
