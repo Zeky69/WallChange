@@ -1193,24 +1193,9 @@ static void show_confetti(const char *img_path) {
     int height = DisplayHeight(dpy, screen);
     Window root = RootWindow(dpy, screen);
 
-    // Créer une fenêtre transparente (nécessite un compositeur pour la vraie transparence)
-    // Sans compositeur, on peut copier le fond d'écran actuel
-    XImage *bg = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
-    
-    XSetWindowAttributes attrs;
-    attrs.override_redirect = True;
-    
-    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
-                               CopyFromParent, InputOutput, CopyFromParent,
-                               CWOverrideRedirect, &attrs);
-                               
-    // Définir le background avec l'image capturée
-    Pixmap pm = XCreatePixmap(dpy, win, width, height, DefaultDepth(dpy, screen));
-    GC gc_pm = XCreateGC(dpy, pm, 0, NULL);
-    XPutImage(dpy, pm, gc_pm, bg, 0, 0, 0, 0, width, height);
-    XSetWindowBackgroundPixmap(dpy, win, pm);
-    XFreeGC(dpy, gc_pm);
-    XDestroyImage(bg);
+    Visual *visual;
+    int depth;
+    Window win = create_overlay_window(dpy, width, height, &visual, &depth);
 
     XMapWindow(dpy, win);
     XRaiseWindow(dpy, win);
@@ -1234,7 +1219,6 @@ static void show_confetti(const char *img_path) {
     time_t start = time(NULL);
     while (time(NULL) - start < 10) {
         // Redessiner le fond (effacer les confettis précédents)
-        // Pour optimiser, on pourrait redessiner juste les zones sales, mais ici on clear tout
         XClearWindow(dpy, win);
         
         for (int i = 0; i < num_confetti; i++) {
@@ -1258,7 +1242,6 @@ static void show_confetti(const char *img_path) {
     }
 
     free(parts);
-    XFreePixmap(dpy, pm);
     XFreeGC(dpy, gc);
     XDestroyWindow(dpy, win);
     XCloseDisplay(dpy);
@@ -1317,7 +1300,7 @@ static void show_spotlight() {
     // Create GC for background filling
     GC gc_bg = XCreateGC(dpy, win, 0, NULL);
     if (depth == 32) {
-        XSetForeground(dpy, gc_bg, 0xCC000000); // Semi-transparent black
+        XSetForeground(dpy, gc_bg, 0x33000000); // Semi-transparent black
     } else {
         XSetForeground(dpy, gc_bg, BlackPixel(dpy, screen));
     }
