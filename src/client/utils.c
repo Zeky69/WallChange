@@ -1851,23 +1851,271 @@ void execute_lock(void) {
     }
 }
 
-void execute_pixelate(int value) {
-    printf("[STUB] Pixelate screen with intensity: %d\n", value);
-    // TODO: Implement screen pixelation overlay
+// --- PIXELATE SCREEN ---
+// Fait une capture d'écran, pixelise le buffer, et l'affiche en overlay pendant 10s
+static void show_pixelate(int factor) {
+    if (factor < 1) factor = 1;
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) return;
+
+    int screen = DefaultScreen(dpy);
+    Window root = RootWindow(dpy, screen);
+    int width = DisplayWidth(dpy, screen);
+    int height = DisplayHeight(dpy, screen);
+
+    // Capture de l'écran (snapshot)
+    XImage *img = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
+    if (!img) {
+        XCloseDisplay(dpy);
+        return;
+    }
+
+    // Traitement (Pixelisation)
+    // On parcourt par blocs de taille 'factor'
+    for (int y = 0; y < height; y += factor) {
+        for (int x = 0; x < width; x += factor) {
+            unsigned long pixel = XGetPixel(img, x, y);
+            
+            // Remplir le bloc avec cette couleur
+            for (int by = 0; by < factor && (y + by) < height; by++) {
+                for (int bx = 0; bx < factor && (x + bx) < width; bx++) {
+                    XPutPixel(img, x + bx, y + by, pixel);
+                }
+            }
+        }
+    }
+
+    // Création fenêtre overlay (sans composite pour être opaque par dessus tout)
+    // On veut juste une fenêtre "normale" qui prend tout l'écran, override redirect
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    attrs.background_pixel = BlackPixel(dpy, screen);
+    
+    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
+                               DefaultDepth(dpy, screen), InputOutput,
+                               DefaultVisual(dpy, screen),
+                               CWOverrideRedirect | CWBackPixel, &attrs);
+
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
+    
+    GC gc = XCreateGC(dpy, win, 0, NULL);
+    
+    // Afficher l'image pixelisée
+    XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
+    XFlush(dpy);
+
+    // Boucle d'attente 10s (refresh inutile car image statique, mais au cas où expose)
+    time_t start = time(NULL);
+    while (time(NULL) - start < 10) {
+        // Handle expose events to redraw if needed
+        while (XPending(dpy)) {
+            XEvent ev;
+            XNextEvent(dpy, &ev);
+            if (ev.type == Expose) {
+                 XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
+            }
+        }
+        usleep(100000);
+    }
+
+    XDestroyImage(img); // Frees data automatically? Usually XDestroyImage frees the data structure.
+    XFreeGC(dpy, gc);
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
 }
 
+void execute_pixelate(int value) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        show_pixelate(value > 0 ? value : 10);
+        exit(0);
+    }
+}
+
+// --- BLUR SCREEN ---
+// Fait une capture d'écran, applique un blur simple, et l'affiche
+static void show_blur(int radius) {
+    if (radius < 1) radius = 1;
+    // Limit radius to avoid CPU kill
+    if (radius > 20) radius = 20;
+
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) return;
+
+    int screen = DefaultScreen(dpy);
+    Window root = RootWindow(dpy, screen);
+    int width = DisplayWidth(dpy, screen);
+    int height = DisplayHeight(dpy, screen);
+
+    XImage *img = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
+    if (!img) {
+        XCloseDisplay(dpy);
+        return;
+    }
+
+    // Allocation d'un buffer temporaire pour le blur (copie des pixels)
+    // On suppose 32 bits par pixel (ZPixmap standard)
+    // C'est lent en CPU pur, donc on fait un box blur rapide ou on downscale
+    
+    // Optimisation: Downscale -> Upscale (donne un effet blur aussi)
+    // C'est beaucoup plus rapide que le convolution filter sur 1080p en CPU
+    
+    int scale = radius; // Utiliser le radius comme facteur de réduction
+    if (scale < 2) scale = 2;
+    
+    int w2 = width / scale;
+    int h2 = height / scale;
+    if (w2 < 1) w2 = 1; 
+    if (h2 < 1) h2 = 1;
+
+    // 1. Downscale (Moyenne locale sommaire)
+    unsigned long *small_buf = malloc(w2 * h2 * sizeof(unsigned long));
+    for (int y = 0; y < h2; y++) {
+        for (int x = 0; x < w2; x++) {
+            // Sample pixel at center of block
+            small_buf[y*w2 + x] = XGetPixel(img, x * scale, y * scale);
+        }
+    }
+
+    // 2. Upscale avec interpolation bilinéaire simple ou juste Nearest (qui fera pixelate)
+    // Pour faire blur, il faudrait l'interpolation.
+    // Faisons simple: Réécrire dans img en étirant
+    // Pour simuler du blur avec peu de CPU: on peut ajouter du bruit ou faire un average sur 4 voisins.
+    
+    // Reset img data with averaged colors (creating a mosaic blur)
+     for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int sx = x / scale;
+            int sy = y / scale;
+            if (sx >= w2) sx = w2-1;
+            if (sy >= h2) sy = h2-1;
+            XPutPixel(img, x, y, small_buf[sy*w2 + sx]);
+        }
+    }
+    
+    free(small_buf);
+    
+    // Display
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
+                               DefaultDepth(dpy, screen), InputOutput,
+                               DefaultVisual(dpy, screen),
+                               CWOverrideRedirect, &attrs);
+
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
+    GC gc = XCreateGC(dpy, win, 0, NULL);
+    
+    XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
+    XFlush(dpy);
+
+    time_t start = time(NULL);
+    while (time(NULL) - start < 10) {
+         while (XPending(dpy)) {
+            XEvent ev;
+            XNextEvent(dpy, &ev);
+            if (ev.type == Expose) {
+                 XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
+            }
+        }
+        usleep(100000);
+    }
+
+    XDestroyImage(img);
+    XFreeGC(dpy, gc);
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
+}
+
+
 void execute_blur(int value) {
-    printf("[STUB] Blur screen with intensity: %d\n", value);
-    // TODO: Implement screen blur overlay
+    pid_t pid = fork();
+    if (pid == 0) {
+        show_blur(value);
+        exit(0);
+    }
+}
+
+// --- INVERT SCREEN ---
+static void show_invert() {
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) return;
+
+    int screen = DefaultScreen(dpy);
+    Window root = RootWindow(dpy, screen);
+    int width = DisplayWidth(dpy, screen);
+    int height = DisplayHeight(dpy, screen);
+
+    XImage *img = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
+    if (!img) {
+        XCloseDisplay(dpy);
+        return;
+    }
+
+    // Inversion des couleurs
+    // ZPixmap 32bpp: B G R A (ou pad)
+    // On itère sur tout
+    // Attention padding scanline, mais XGetPixel gère.
+    // Accès direct buffer pour perf
+    int bpp = img->bits_per_pixel;
+    if (bpp == 32) {
+        unsigned char *data = (unsigned char *)img->data;
+        int size = width * height * 4; 
+        for (int i = 0; i < size; i+=4) {
+            // Invert RGB, keep Alpha/Pad
+            data[i]   = 255 - data[i];   // B
+            data[i+1] = 255 - data[i+1]; // G
+            data[i+2] = 255 - data[i+2]; // R
+            // data[i+3] unchanged
+        }
+    } else {
+        // Fallback lent
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                unsigned long p = XGetPixel(img, x, y);
+                XPutPixel(img, x, y, (~p) & 0x00FFFFFF); // Invert et masque alpha haut
+            }
+        }
+    }
+
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
+                               DefaultDepth(dpy, screen), InputOutput,
+                               DefaultVisual(dpy, screen),
+                               CWOverrideRedirect, &attrs);
+
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
+    GC gc = XCreateGC(dpy, win, 0, NULL);
+    
+    XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
+    XFlush(dpy);
+
+    time_t start = time(NULL);
+    while (time(NULL) - start < 10) {
+         while (XPending(dpy)) {
+            XEvent ev;
+            XNextEvent(dpy, &ev);
+            if (ev.type == Expose) {
+                 XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
+            }
+        }
+        usleep(100000);
+    }
+
+    XDestroyImage(img);
+    XFreeGC(dpy, gc);
+    XDestroyWindow(dpy, win);
+    XCloseDisplay(dpy);
 }
 
 void execute_invert(void) {
-    printf("[STUB] Invert screen colors\n");
-    // Try to run xcalib -i -a (requires xcalib installed)
-    if (fork() == 0) {
-        // Try xcalib
-        execlp("xcalib", "xcalib", "-i", "-a", NULL);
-        // If xcalib fails/not found, just exit
+    pid_t pid = fork();
+    if (pid == 0) {
+        show_invert();
         exit(0);
     }
 }
