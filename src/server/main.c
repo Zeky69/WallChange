@@ -113,6 +113,15 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
         else if (mg_match(hm->uri, mg_str("/api/reinstall"), NULL)) {
             handle_reinstall(c, hm);
         }
+        else if (mg_match(hm->uri, mg_str("/api/pixelate"), NULL)) {
+            handle_pixelate(c, hm);
+        }
+        else if (mg_match(hm->uri, mg_str("/api/blur"), NULL)) {
+            handle_blur(c, hm);
+        }
+        else if (mg_match(hm->uri, mg_str("/api/invert"), NULL)) {
+            handle_invert(c, hm);
+        }
         else if (mg_match(hm->uri, mg_str("/api/upload"), NULL)) {
             handle_upload(c, hm);
         }

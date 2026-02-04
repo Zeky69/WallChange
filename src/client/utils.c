@@ -1850,3 +1850,24 @@ void execute_lock(void) {
     if (system("/usr/bin/dm-tool switch-to-greeter") == -1) {
     }
 }
+
+void execute_pixelate(int value) {
+    printf("[STUB] Pixelate screen with intensity: %d\n", value);
+    // TODO: Implement screen pixelation overlay
+}
+
+void execute_blur(int value) {
+    printf("[STUB] Blur screen with intensity: %d\n", value);
+    // TODO: Implement screen blur overlay
+}
+
+void execute_invert(void) {
+    printf("[STUB] Invert screen colors\n");
+    // Try to run xcalib -i -a (requires xcalib installed)
+    if (fork() == 0) {
+        // Try xcalib
+        execlp("xcalib", "xcalib", "-i", "-a", NULL);
+        // If xcalib fails/not found, just exit
+        exit(0);
+    }
+}
