@@ -1463,45 +1463,53 @@ static void show_wavescreen() {
     XFlush(dpy);
     
     GC gc = XCreateGC(dpy, win, 0, NULL);
-    XSetLineAttributes(dpy, gc, 3, LineSolid, CapRound, JoinRound);
+    XSetLineAttributes(dpy, gc, 2, LineSolid, CapRound, JoinRound);
+    
+    // Optimisation : allocation unique du tableau de points
+    int step = 5;
+    int max_points = width / step + 5;
+    XPoint *points = malloc(sizeof(XPoint) * max_points);
     
     time_t start = time(NULL);
     float t = 0;
     
+    // Palette "Neon / Synthwave"
+    unsigned long colors[] = {
+        0x00FFFF, // Cyan
+        0xFF00FF, // Magenta
+        0x0000FF, // Blue
+        0x8A2BE2, // BlueViolet
+        0xFF1493  // DeepPink
+    };
+
     while (time(NULL) - start < 10) {
         XClearWindow(dpy, win);
         
-        for (int i = 0; i < 10; i++) {
-            // Draw some sine waves
-            XPoint *points = malloc(sizeof(XPoint) * (width/5 + 1));
+        for (int i = 0; i < 5; i++) {
             int count = 0;
-            for (int x = 0; x < width; x+=5) {
-                int y = height/2 + (i - 5) * 50 + sin(x * 0.01 + t + i) * 50;
+            float offset_base = height / 2.0;
+            float amplitude = 60.0;
+            
+            for (int x = 0; x <= width; x += step) {
+                // Combinaison de plusieurs ondes pour un effet plus fluide
+                float val = sin(x * 0.003 + t + i * 0.5) * amplitude
+                          + sin(x * 0.01 + t * 1.5 + i) * (amplitude * 0.5);
+                
                 points[count].x = x;
-                points[count].y = y;
+                points[count].y = offset_base + val + (i - 2) * 40;
                 count++;
             }
             
-            // Rainbow colors
-            unsigned long color = 0;
-            switch(i % 6) {
-                case 0: color = 0xFF0000; break;
-                case 1: color = 0x00FF00; break;
-                case 2: color = 0x0000FF; break;
-                case 3: color = 0xFFFF00; break;
-                case 4: color = 0xFF00FF; break;
-                case 5: color = 0x00FFFF; break;
-            }
-            XSetForeground(dpy, gc, color);
+            XSetForeground(dpy, gc, colors[i % 5]);
             XDrawLines(dpy, win, gc, points, count, CoordModeOrigin);
-            free(points);
         }
         
         XFlush(dpy);
-        t += 0.2;
-        usleep(30000);
+        t += 0.08;
+        usleep(16000); // ~60 FPS
     }
 
+    free(points);
     XFreeGC(dpy, gc);
     XDestroyWindow(dpy, win);
     XCloseDisplay(dpy);
