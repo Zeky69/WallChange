@@ -16,6 +16,7 @@
 #include <X11/Xatom.h>
 #include <X11/extensions/shape.h>
 #include <X11/extensions/Xfixes.h>
+#include <X11/extensions/Xrandr.h>
 
 // Note: stb_image est déjà inclus dans common/image_utils.c
 // On ne doit PAS définir STB_IMAGE_IMPLEMENTATION ici pour éviter les conflits
@@ -1851,10 +1852,22 @@ void execute_lock(void) {
     }
 }
 
-// --- PIXELATE SCREEN ---
-// Fait une capture d'écran, pixelise le buffer, et l'affiche en overlay pendant 10s
+// Helper pour rendre une fenêtre totalement transparente aux clics (Input Transparent)
+static void make_window_input_transparent(Display *dpy, Window win) {
+    XRectangle rect;
+    // Créer une région vide (0 rectangles)
+    XserverRegion region = XFixesCreateRegion(dpy, &rect, 0);
+    // Appliquer cette règle à la forme d'entrée (ShapeInput)
+    // Cela signifie que la "zone cliquable" est vide, donc tous les clics passent au travers
+    XFixesSetWindowShapeRegion(dpy, win, ShapeInput, 0, 0, region);
+    XFixesDestroyRegion(dpy, region);
+}
+
+// --- PIXELATE SCREEN (LIVE) ---
 static void show_pixelate(int factor) {
-    if (factor < 1) factor = 1;
+    if (factor < 2) factor = 2; // Minimum pixellisation
+    if (factor > 50) factor = 50;
+
     Display *dpy = XOpenDisplay(NULL);
     if (!dpy) return;
 
@@ -1863,63 +1876,87 @@ static void show_pixelate(int factor) {
     int width = DisplayWidth(dpy, screen);
     int height = DisplayHeight(dpy, screen);
 
-    // Capture de l'écran (snapshot)
-    XImage *img = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
-    if (!img) {
-        XCloseDisplay(dpy);
-        return;
-    }
+    // Initial Image Allocation for buffer usage
+    // On n'alloue pas ici, XGetImage le fera à chaque boucle ou on réutilise ?
+    // XGetImage alloue une nouvelle XImage. Il faut la détruire à chaque fois ou ruser (XShm).
+    // Restons simple avec XGetImage standard pour l'instant.
 
-    // Traitement (Pixelisation)
-    // On parcourt par blocs de taille 'factor'
-    for (int y = 0; y < height; y += factor) {
-        for (int x = 0; x < width; x += factor) {
-            unsigned long pixel = XGetPixel(img, x, y);
-            
-            // Remplir le bloc avec cette couleur
-            for (int by = 0; by < factor && (y + by) < height; by++) {
-                for (int bx = 0; bx < factor && (x + bx) < width; bx++) {
-                    XPutPixel(img, x + bx, y + by, pixel);
-                }
-            }
-        }
-    }
-
-    // Création fenêtre overlay (sans composite pour être opaque par dessus tout)
-    // On veut juste une fenêtre "normale" qui prend tout l'écran, override redirect
+    // Création fenêtre overlay
     XSetWindowAttributes attrs;
     attrs.override_redirect = True;
-    attrs.background_pixel = BlackPixel(dpy, screen);
+    // attrs.background_pixel = BlackPixel(dpy, screen); // Pas nécessaire si on dessine tout de suite
     
     Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
                                DefaultDepth(dpy, screen), InputOutput,
                                DefaultVisual(dpy, screen),
-                               CWOverrideRedirect | CWBackPixel, &attrs);
+                               CWOverrideRedirect, &attrs);
 
+    // Rendre la fenêtre "invisible" aux clics
+    make_window_input_transparent(dpy, win);
+    
     XMapWindow(dpy, win);
-    XRaiseWindow(dpy, win);
+    XRaiseWindow(dpy, win); // Au dessus de tout
     
     GC gc = XCreateGC(dpy, win, 0, NULL);
     
-    // Afficher l'image pixelisée
-    XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
-    XFlush(dpy);
-
-    // Boucle d'attente 10s (refresh inutile car image statique, mais au cas où expose)
     time_t start = time(NULL);
-    while (time(NULL) - start < 10) {
-        // Handle expose events to redraw if needed
+    // Boucle "Live"
+    while (time(NULL) - start < 15) { // Dure 15 secondes
+        // 1. Capture écran
+        XImage *img = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
+        if (!img) break;
+
+        // 2. Traitement Pixelate
+        // Optimisation: Lecture directe buffer pour 32bpp
+        if (img->bits_per_pixel == 32) {
+            unsigned int *data = (unsigned int *)img->data;
+            for (int y = 0; y < height; y += factor) {
+                for (int x = 0; x < width; x += factor) {
+                    // Couleur du pixel en haut à gauche du bloc
+                    unsigned int pixel = data[y * width + x];
+                    
+                    // Remplissage du bloc
+                    int max_bx = (x + factor < width) ? factor : (width - x);
+                    int max_by = (y + factor < height) ? factor : (height - y);
+                    
+                    for (int by = 0; by < max_by; by++) {
+                        // Optimisation memcpy pour les lignes ?
+                        // Un simple loop est souvent suffisant ici car RAM rapide
+                        int row_idx = (y + by) * width + x;
+                        for (int bx = 0; bx < max_bx; bx++) {
+                            data[row_idx + bx] = pixel;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Fallback lent (XGetPixel/XPutPixel)
+            for (int y = 0; y < height; y += factor) {
+                for (int x = 0; x < width; x += factor) {
+                    unsigned long pixel = XGetPixel(img, x, y);
+                    for (int by = 0; by < factor && (y + by) < height; by++) {
+                        for (int bx = 0; bx < factor && (x + bx) < width; bx++) {
+                            XPutPixel(img, x + bx, y + by, pixel);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Dessin sur l'overlay
+        XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
+        XDestroyImage(img); // Libère l'image et data
+
+        // Gestion événements (important pour rester fluide)
         while (XPending(dpy)) {
             XEvent ev;
             XNextEvent(dpy, &ev);
-            if (ev.type == Expose) {
-                 XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
-            }
         }
-        usleep(100000);
+
+        // Frame limiter (~15 FPS pour ne pas tuer le CPU)
+        usleep(60000); 
     }
 
-    XDestroyImage(img); // Frees data automatically? Usually XDestroyImage frees the data structure.
     XFreeGC(dpy, gc);
     XDestroyWindow(dpy, win);
     XCloseDisplay(dpy);
@@ -1933,11 +1970,9 @@ void execute_pixelate(int value) {
     }
 }
 
-// --- BLUR SCREEN ---
-// Fait une capture d'écran, applique un blur simple, et l'affiche
+// --- BLUR SCREEN (LIVE) ---
 static void show_blur(int radius) {
-    if (radius < 1) radius = 1;
-    // Limit radius to avoid CPU kill
+    if (radius < 2) radius = 2;
     if (radius > 20) radius = 20;
 
     Display *dpy = XOpenDisplay(NULL);
@@ -1948,55 +1983,6 @@ static void show_blur(int radius) {
     int width = DisplayWidth(dpy, screen);
     int height = DisplayHeight(dpy, screen);
 
-    XImage *img = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
-    if (!img) {
-        XCloseDisplay(dpy);
-        return;
-    }
-
-    // Allocation d'un buffer temporaire pour le blur (copie des pixels)
-    // On suppose 32 bits par pixel (ZPixmap standard)
-    // C'est lent en CPU pur, donc on fait un box blur rapide ou on downscale
-    
-    // Optimisation: Downscale -> Upscale (donne un effet blur aussi)
-    // C'est beaucoup plus rapide que le convolution filter sur 1080p en CPU
-    
-    int scale = radius; // Utiliser le radius comme facteur de réduction
-    if (scale < 2) scale = 2;
-    
-    int w2 = width / scale;
-    int h2 = height / scale;
-    if (w2 < 1) w2 = 1; 
-    if (h2 < 1) h2 = 1;
-
-    // 1. Downscale (Moyenne locale sommaire)
-    unsigned long *small_buf = malloc(w2 * h2 * sizeof(unsigned long));
-    for (int y = 0; y < h2; y++) {
-        for (int x = 0; x < w2; x++) {
-            // Sample pixel at center of block
-            small_buf[y*w2 + x] = XGetPixel(img, x * scale, y * scale);
-        }
-    }
-
-    // 2. Upscale avec interpolation bilinéaire simple ou juste Nearest (qui fera pixelate)
-    // Pour faire blur, il faudrait l'interpolation.
-    // Faisons simple: Réécrire dans img en étirant
-    // Pour simuler du blur avec peu de CPU: on peut ajouter du bruit ou faire un average sur 4 voisins.
-    
-    // Reset img data with averaged colors (creating a mosaic blur)
-     for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            int sx = x / scale;
-            int sy = y / scale;
-            if (sx >= w2) sx = w2-1;
-            if (sy >= h2) sy = h2-1;
-            XPutPixel(img, x, y, small_buf[sy*w2 + sx]);
-        }
-    }
-    
-    free(small_buf);
-    
-    // Display
     XSetWindowAttributes attrs;
     attrs.override_redirect = True;
     Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
@@ -2004,26 +1990,71 @@ static void show_blur(int radius) {
                                DefaultVisual(dpy, screen),
                                CWOverrideRedirect, &attrs);
 
+    make_window_input_transparent(dpy, win);
+
     XMapWindow(dpy, win);
     XRaiseWindow(dpy, win);
     GC gc = XCreateGC(dpy, win, 0, NULL);
     
-    XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
-    XFlush(dpy);
+    // Buffer pour downscale (taille max pour éviter malloc en boucle)
+    int max_w = width / 2; 
+    int max_h = height / 2;
+    unsigned int *small_buf = malloc(max_w * max_h * sizeof(unsigned int));
+    if (!small_buf) radius = 1; // Désactiver si fail alloc
 
     time_t start = time(NULL);
-    while (time(NULL) - start < 10) {
-         while (XPending(dpy)) {
-            XEvent ev;
-            XNextEvent(dpy, &ev);
-            if (ev.type == Expose) {
-                 XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
+    while (time(NULL) - start < 15) {
+        XImage *img = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
+        if (!img) break;
+
+        int scale = radius;
+        int w2 = width / scale;
+        int h2 = height / scale;
+        if (w2 < 1) w2 = 1; 
+        if (h2 < 1) h2 = 1;
+        
+        // Check buffers
+        if (w2 * h2 > max_w * max_h) { // Should not happen with radius >= 2
+            // skip processing frame
+        } else if (img->bits_per_pixel == 32) {
+            unsigned int *src = (unsigned int *)img->data;
+            
+            // 1. Downscale (Simple subsampling)
+            for (int y = 0; y < h2; y++) {
+                int src_y = y * scale;
+                int dst_row = y * w2;
+                int src_row = src_y * width;
+                for (int x = 0; x < w2; x++) {
+                    small_buf[dst_row + x] = src[src_row + (x * scale)];
+                }
+            }
+            
+            // 2. Upscale (Nearest neighbor -> Blocky Blur)
+            for (int y = 0; y < height; y++) {
+                int sy = y / scale;
+                if (sy >= h2) sy = h2 - 1;
+                int dst_row = y * width;
+                int src_row = sy * w2;
+                
+                for (int x = 0; x < width; x++) {
+                    int sx = x / scale;
+                    if (sx >= w2) sx = w2 - 1;
+                    src[dst_row + x] = small_buf[src_row + sx];
+                }
             }
         }
-        usleep(100000);
-    }
 
-    XDestroyImage(img);
+        XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
+        XDestroyImage(img);
+
+        while (XPending(dpy)) {
+            XEvent ev;
+            XNextEvent(dpy, &ev);
+        }
+        usleep(60000); // 15 FPS
+    }
+    
+    free(small_buf);
     XFreeGC(dpy, gc);
     XDestroyWindow(dpy, win);
     XCloseDisplay(dpy);
@@ -2038,77 +2069,82 @@ void execute_blur(int value) {
     }
 }
 
-// --- INVERT SCREEN ---
+// --- INVERT SCREEN (GAMMA RAMP) ---
 static void show_invert() {
     Display *dpy = XOpenDisplay(NULL);
     if (!dpy) return;
 
-    int screen = DefaultScreen(dpy);
-    Window root = RootWindow(dpy, screen);
-    int width = DisplayWidth(dpy, screen);
-    int height = DisplayHeight(dpy, screen);
-
-    XImage *img = XGetImage(dpy, root, 0, 0, width, height, AllPlanes, ZPixmap);
-    if (!img) {
+    Window root = RootWindow(dpy, DefaultScreen(dpy));
+    XRRScreenResources *res = XRRGetScreenResources(dpy, root);
+    if (!res) {
         XCloseDisplay(dpy);
         return;
     }
 
-    // Inversion des couleurs
-    // ZPixmap 32bpp: B G R A (ou pad)
-    // On itère sur tout
-    // Attention padding scanline, mais XGetPixel gère.
-    // Accès direct buffer pour perf
-    int bpp = img->bits_per_pixel;
-    if (bpp == 32) {
-        unsigned char *data = (unsigned char *)img->data;
-        int size = width * height * 4; 
-        for (int i = 0; i < size; i+=4) {
-            // Invert RGB, keep Alpha/Pad
-            data[i]   = 255 - data[i];   // B
-            data[i+1] = 255 - data[i+1]; // G
-            data[i+2] = 255 - data[i+2]; // R
-            // data[i+3] unchanged
-        }
-    } else {
-        // Fallback lent
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                unsigned long p = XGetPixel(img, x, y);
-                XPutPixel(img, x, y, (~p) & 0x00FFFFFF); // Invert et masque alpha haut
+    // Sauvegarder et inverser pour chaque CRTC
+    typedef struct {
+        RRCrtc crtc;
+        int size;
+        unsigned short *red;
+        unsigned short *green;
+        unsigned short *blue;
+    } SavedGamma;
+
+    SavedGamma *saved = calloc(res->ncrtc, sizeof(SavedGamma));
+    int saved_count = 0;
+
+    for (int i = 0; i < res->ncrtc; i++) {
+        RRCrtc crtc = res->crtcs[i];
+        if (XRRGetCrtcInfo(dpy, res, crtc)->noutput == 0) continue; // Skip disconnected
+
+        int size = XRRGetCrtcGammaSize(dpy, crtc);
+        if (size == 0) continue;
+
+        XRRCrtcGamma *gamma = XRRGetCrtcGamma(dpy, crtc);
+        if (gamma) {
+            // Sauvegarde
+            saved[saved_count].crtc = crtc;
+            saved[saved_count].size = size;
+            saved[saved_count].red = malloc(size * sizeof(unsigned short));
+            saved[saved_count].green = malloc(size * sizeof(unsigned short));
+            saved[saved_count].blue = malloc(size * sizeof(unsigned short));
+            memcpy(saved[saved_count].red, gamma->red, size * sizeof(unsigned short));
+            memcpy(saved[saved_count].green, gamma->green, size * sizeof(unsigned short));
+            memcpy(saved[saved_count].blue, gamma->blue, size * sizeof(unsigned short));
+
+            // Inversion
+            for (int j = 0; j < size; j++) {
+                gamma->red[j] = 65535 - gamma->red[j];
+                gamma->green[j] = 65535 - gamma->green[j];
+                gamma->blue[j] = 65535 - gamma->blue[j];
             }
+            
+            XRRSetCrtcGamma(dpy, crtc, gamma);
+            XRRFreeGamma(gamma);
+            saved_count++;
         }
     }
 
-    XSetWindowAttributes attrs;
-    attrs.override_redirect = True;
-    Window win = XCreateWindow(dpy, root, 0, 0, width, height, 0,
-                               DefaultDepth(dpy, screen), InputOutput,
-                               DefaultVisual(dpy, screen),
-                               CWOverrideRedirect, &attrs);
+    // Attendre 15 secondes (pendant lesquelles l'utilisateur peut interagir normalement)
+    sleep(15);
 
-    XMapWindow(dpy, win);
-    XRaiseWindow(dpy, win);
-    GC gc = XCreateGC(dpy, win, 0, NULL);
-    
-    XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
-    XFlush(dpy);
-
-    time_t start = time(NULL);
-    while (time(NULL) - start < 10) {
-         while (XPending(dpy)) {
-            XEvent ev;
-            XNextEvent(dpy, &ev);
-            if (ev.type == Expose) {
-                 XPutImage(dpy, win, gc, img, 0, 0, 0, 0, width, height);
-            }
+    // Restaurer
+    for (int i = 0; i < saved_count; i++) {
+        XRRCrtcGamma *gamma = XRRAllocGamma(saved[i].size);
+        if (gamma) {
+            memcpy(gamma->red, saved[i].red, saved[i].size * sizeof(unsigned short));
+            memcpy(gamma->green, saved[i].green, saved[i].size * sizeof(unsigned short));
+            memcpy(gamma->blue, saved[i].blue, saved[i].size * sizeof(unsigned short));
+            XRRSetCrtcGamma(dpy, saved[i].crtc, gamma);
+            XRRFreeGamma(gamma);
         }
-        usleep(100000);
+        free(saved[i].red);
+        free(saved[i].green);
+        free(saved[i].blue);
     }
 
-    XDestroyImage(img);
-    XFreeGC(dpy, gc);
-    XDestroyWindow(dpy, win);
+    free(saved);
+    XRRFreeScreenResources(res);
     XCloseDisplay(dpy);
 }
 

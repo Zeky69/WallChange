@@ -2,7 +2,7 @@ CC = gcc
 VERSION := $(shell cat VERSION)
 CFLAGS = -O2 -DMG_TLS=2 -Iinclude -Isrc/common -Isrc/server -DVERSION=\"$(VERSION)\"
 LDFLAGS = -lssl -lcrypto
-LDFLAGS_CLIENT = $(LDFLAGS) -lX11 -lXext -lXfixes -lXtst -lm
+LDFLAGS_CLIENT = $(LDFLAGS) -lX11 -lXext -lXfixes -lXtst -lXrandr -lm
 LDFLAGS_SERVER = $(LDFLAGS) -lm
 
 TARGET_CLIENT = wallchange
