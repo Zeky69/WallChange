@@ -1531,7 +1531,6 @@ static void show_dvdbounce(const char *img_path) {
     int screen = DefaultScreen(dpy);
     int width = DisplayWidth(dpy, screen);
     int height = DisplayHeight(dpy, screen);
-    Window root = RootWindow(dpy, screen);
 
     Visual *visual;
     int depth;
@@ -1541,43 +1540,67 @@ static void show_dvdbounce(const char *img_path) {
     XRaiseWindow(dpy, win);
     
     GC gc = XCreateGC(dpy, win, 0, NULL);
+    XSetLineAttributes(dpy, gc, 3, LineSolid, CapRound, JoinRound); // Lignes plus épaisses
+
+    // Tenter de charger une police plus grande pour le "DVD"
+    XFontStruct *font = XLoadQueryFont(dpy, "-*-helvetica-bold-r-*-*-34-*-*-*-*-*-*-*");
+    if (!font) font = XLoadQueryFont(dpy, "-*-*-bold-r-*-*-24-*-*-*-*-*-*-*");
+    if (!font) font = XLoadQueryFont(dpy, "fixed");
+    if (font) XSetFont(dpy, gc, font->fid);
+
+    // Dimensions du "logo"
+    int logo_w = 160;
+    int logo_h = 70;
     
-    // Charger l'image ou utiliser un rect
-    int logo_w = 100, logo_h = 100;
     float x = rand() % (width - logo_w);
     float y = rand() % (height - logo_h);
     float vx = 5.0, vy = 5.0;
-    unsigned long color = 0xFF0000;
     
-    // TODO: Charger image si img_path existe (via stb_image + XPutImage)
-    // Pour l'instant on fait un rect coloré qui change de couleur
+    // Couleurs vives
+    unsigned long colors[] = {0xFF0000, 0x00FF00, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF, 0xFFFFFF, 0xFFA500};
+    int color_idx = rand() % 8;
     
     time_t start = time(NULL);
-    while (time(NULL) - start < 15) {
-        XClearWindow(dpy, win); // Remet le fond (pixmap)
+    
+    // Durée 1 minute (60s)
+    while (time(NULL) - start < 60) {
+        XClearWindow(dpy, win);
         
         x += vx;
         y += vy;
         
         int hit = 0;
-        if (x <= 0 || x + logo_w >= width) { vx = -vx; hit = 1; }
-        if (y <= 0 || y + logo_h >= height) { vy = -vy; hit = 1; }
+        if (x <= 0) { x = 0; vx = -vx; hit = 1; }
+        else if (x + logo_w >= width) { x = width - logo_w; vx = -vx; hit = 1; }
+        
+        if (y <= 0) { y = 0; vy = -vy; hit = 1; }
+        else if (y + logo_h >= height) { y = height - logo_h; vy = -vy; hit = 1; }
         
         if (hit) {
-            color = (rand() % 0xFFFFFF) | 0x404040; // Couleur brillante
+            color_idx = (color_idx + 1) % 8;
         }
         
-        XSetForeground(dpy, gc, color);
-        XFillRectangle(dpy, win, gc, (int)x, (int)y, logo_w, logo_h);
+        XSetForeground(dpy, gc, colors[color_idx]);
         
-        // Texte "DVD"
-        XSetForeground(dpy, gc, 0x000000);
-        XDrawString(dpy, win, gc, (int)x + 40, (int)y + 55, "DVD", 3);
+        // Dessin du logo "DVD" stylisé
+        // Ellipse contour
+        XDrawArc(dpy, win, gc, (int)x, (int)y, logo_w, logo_h, 0, 360*64);
         
+        // Texte Centré
+        const char *txt = "DVD";
+        int txt_w = font ? XTextWidth(font, txt, 3) : 20;
+        int txt_h = font ? (font->ascent) : 10;
+        
+        XDrawString(dpy, win, gc, (int)x + (logo_w - txt_w)/2, (int)y + (logo_h + txt_h)/2 - 5, txt, 3);
+        
+        // Petit disque plein en dessous
+        XFillArc(dpy, win, gc, (int)x + logo_w/2 - 25, (int)y + logo_h - 8, 50, 16, 0, 360*64);
+
         XFlush(dpy);
-        usleep(20000);
+        usleep(16000); // ~60 FPS
     }
 
+    if (font) XFreeFont(dpy, font);
     XFreeGC(dpy, gc);
     XDestroyWindow(dpy, win);
     XCloseDisplay(dpy);
