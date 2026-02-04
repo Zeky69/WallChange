@@ -1994,7 +1994,7 @@ static void show_nyancat() {
     if (file_data) {
         // Resize plus petit (40px hauteur)
         float ratio = (float)w / h;
-        int target_h = 40;
+        int target_h = 80;
         int target_w = (int)(target_h * ratio);
         
         unsigned char *resized = resize_image(file_data, w, h, 4, target_w, target_h);
@@ -2006,7 +2006,9 @@ static void show_nyancat() {
             cat_bgra = rgba_to_bgra(resized, img_w, img_h); // Utiliser la fonction existante
             free(resized);
             
-            cat_img = XCreateImage(dpy, DefaultVisual(dpy, screen), DefaultDepth(dpy, screen),
+            // Correction CRITIQUE: Utiliser 'visual' et 'depth' de create_overlay_window
+            // sinon on risque un BadMatch si la fenêtre a une profondeur différente (ex: 32 vs 24)
+            cat_img = XCreateImage(dpy, visual, depth,
                                    ZPixmap, 0, (char *)cat_bgra, img_w, img_h, 32, 0);
         }
     }
