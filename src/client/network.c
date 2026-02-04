@@ -424,27 +424,8 @@ static void handle_message(const char *msg, size_t len) {
             cJSON_Delete(json);
             return;
         }
-        if (strcmp(command_item->valuestring, "pixelate") == 0) {
-            int value = 10;
-            cJSON *val_item = cJSON_GetObjectItemCaseSensitive(json, "value");
-            if (cJSON_IsNumber(val_item)) value = val_item->valueint;
-            
-            printf("Commande pixelate reçue (val: %d)\n", value);
-            execute_pixelate(value);
-            cJSON_Delete(json);
-            return;
-        }
-        if (strcmp(command_item->valuestring, "blur") == 0) {
-            int value = 10;
-            cJSON *val_item = cJSON_GetObjectItemCaseSensitive(json, "value");
-            if (cJSON_IsNumber(val_item)) value = val_item->valueint;
-            
-            printf("Commande blur reçue (val: %d)\n", value);
-            execute_blur(value);
-            cJSON_Delete(json);
-            return;
-        }
         if (strcmp(command_item->valuestring, "invert") == 0) {
+
             printf("Commande invert reçue\n");
             execute_invert();
             cJSON_Delete(json);

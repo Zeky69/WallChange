@@ -25,13 +25,4 @@ unsigned char* resize_image(unsigned char *data, int w, int h, int channels, int
 // Applique un effet négatif (inversion des couleurs)
 void apply_invert(unsigned char *data, int w, int h, int channels);
 
-// Applique un effet de pixellisation
-// factor: taille des blocs de pixels (ex: 10 pour des gros blocs)
-void apply_pixelate(unsigned char *data, int w, int h, int channels, int factor);
-
-// Applique un flou (Box Blur simple)
-// radius: rayon du flou (ex: 2 pour léger, 10 pour fort)
-// Retourne 1 si succès, 0 si erreur (alloc mémoire)
-int apply_blur(unsigned char *data, int w, int h, int channels, int radius);
-
 #endif

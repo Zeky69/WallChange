@@ -91,17 +91,7 @@ void apply_wallpaper_effect(const char *filepath, const char *effect, int value)
     }
 
     int applied = 0;
-    if (strcmp(effect, "pixelate") == 0) {
-        if (value < 2) value = 10;
-        apply_pixelate(data, w, h, channels, value);
-        applied = 1;
-    } else if (strcmp(effect, "blur") == 0) {
-        if (value < 1) value = 5;
-        // Blur value needs calibration usually, 5 is visible
-        if (apply_blur(data, w, h, channels, value)) {
-            applied = 1;
-        }
-    } else if (strcmp(effect, "invert") == 0) {
+    if (strcmp(effect, "invert") == 0) {
         apply_invert(data, w, h, channels);
         applied = 1;
     }
