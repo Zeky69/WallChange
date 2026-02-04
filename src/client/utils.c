@@ -1080,7 +1080,7 @@ static Window create_overlay_window(Display *dpy, int width, int height, Visual 
     // Fallback to normal window if no 32-bit visual (no transparency support)
     XSetWindowAttributes attrs;
     attrs.override_redirect = True;
-    attrs.background_pixel = 0; // Black
+    attrs.background_pixel = BlackPixel(dpy, DefaultScreen(dpy)); // Black
     
     Window win = XCreateWindow(dpy, DefaultRootWindow(dpy), 0, 0, width, height, 0,
                                CopyFromParent, InputOutput, CopyFromParent,
@@ -1307,21 +1307,20 @@ static void show_spotlight() {
     int depth;
     Window win = create_overlay_window(dpy, width, height, &visual, &depth);
 
-    // Fill with semi-transparent black if possible, or opaque black if not
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
+    XFlush(dpy);
+
+    // Créer un GC pour le dessin si besoin
+    // GC gc = XCreateGC(dpy, win, 0, NULL);
+    
+    // Create GC for background filling
     GC gc_bg = XCreateGC(dpy, win, 0, NULL);
     if (depth == 32) {
         XSetForeground(dpy, gc_bg, 0xCC000000); // Semi-transparent black
     } else {
         XSetForeground(dpy, gc_bg, BlackPixel(dpy, screen));
     }
-    XFillRectangle(dpy, win, gc_bg, 0, 0, width, height);
-    XFreeGC(dpy, gc_bg);
-
-    XMapWindow(dpy, win);
-    XRaiseWindow(dpy, win);
-    
-    // Créer un GC pour le dessin si besoin
-    // GC gc = XCreateGC(dpy, win, 0, NULL);
 
     time_t start = time(NULL);
     int radius = 150;
@@ -1335,9 +1334,9 @@ static void show_spotlight() {
                           &root_x, &root_y, &win_x, &win_y, &mask_return)) {
             
             // Créer la région pour tout l'écran
-            XRectangle screen_rect = {0, 0, width, height};
-            Region region = XCreateRegion();
-            XUnionRectWithRegion(&screen_rect, region, region);
+            // XRectangle screen_rect = {0, 0, width, height};
+            // Region region = XCreateRegion();
+            // XUnionRectWithRegion(&screen_rect, region, region);
             
             // Créer la région pour le trou (cercle approximé par octogone ou rects)
             // XShape ne supporte pas les cercles parfaits directement, il faut une bitmap ou des rects
@@ -1361,12 +1360,17 @@ static void show_spotlight() {
             
             XFreeGC(dpy, mask_gc);
             XFreePixmap(dpy, mask);
-            XDestroyRegion(region);
+            // XDestroyRegion(region);
+            
+            // Redraw background to ensure it stays dark (XShape might expose/clear areas)
+            XFillRectangle(dpy, win, gc_bg, 0, 0, width, height);
         }
         
         XFlush(dpy);
         usleep(20000);
     }
+    
+    XFreeGC(dpy, gc_bg);
 
     XDestroyWindow(dpy, win);
     XCloseDisplay(dpy);

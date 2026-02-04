@@ -98,12 +98,6 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
         else if (mg_match(hm->uri, mg_str("/api/textscreen"), NULL)) {
             handle_textscreen(c, hm);
         }
-        else if (mg_match(hm->uri, mg_str("/api/screenshot"), NULL)) {
-            handle_screenshot_request(c, hm);
-        }
-        else if (mg_match(hm->uri, mg_str("/api/upload_screenshot"), NULL)) {
-            handle_upload_screenshot(c, hm);
-        }
         else if (mg_match(hm->uri, mg_str("/api/wavescreen"), NULL)) {
             handle_wavescreen(c, hm);
         }
@@ -123,12 +117,10 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
             handle_upload(c, hm);
         }
         // Servir les fichiers uploadés
-        else if (mg_match(hm->uri, mg_str("/uploads/#"), NULL)) {
+        else if (mg_match(hm->uri, mg_str("/uploads/*"), NULL)) {
             struct mg_http_serve_opts opts = {
                 .root_dir = ".",
                 .extra_headers = "Access-Control-Allow-Origin: *\r\n"
-                                 "Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n"
-                                 "Cross-Origin-Resource-Policy: cross-origin\r\n"
             };
             mg_http_serve_dir(c, hm, &opts);
         }
@@ -226,10 +218,6 @@ int main(int argc, char *argv[]) {
     // Initialiser le serveur
     mg_mgr_init(&mgr);
     mkdir(g_upload_dir, 0755);
-    
-    char screenshots_dir[256];
-    snprintf(screenshots_dir, sizeof(screenshots_dir), "%s/screenshots", g_upload_dir);
-    mkdir(screenshots_dir, 0755);
 
     char listen_on[64];
     snprintf(listen_on, sizeof(listen_on), "ws://0.0.0.0:%d", port);
