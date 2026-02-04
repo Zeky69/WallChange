@@ -1540,66 +1540,151 @@ static void show_dvdbounce(const char *img_path) {
     XRaiseWindow(dpy, win);
     
     GC gc = XCreateGC(dpy, win, 0, NULL);
-    XSetLineAttributes(dpy, gc, 3, LineSolid, CapRound, JoinRound); // Lignes plus épaisses
-
-    // Tenter de charger une police plus grande pour le "DVD"
-    XFontStruct *font = XLoadQueryFont(dpy, "-*-helvetica-bold-r-*-*-34-*-*-*-*-*-*-*");
-    if (!font) font = XLoadQueryFont(dpy, "-*-*-bold-r-*-*-24-*-*-*-*-*-*-*");
-    if (!font) font = XLoadQueryFont(dpy, "fixed");
-    if (font) XSetFont(dpy, gc, font->fid);
-
-    // Dimensions du "logo"
-    int logo_w = 160;
-    int logo_h = 70;
     
-    float x = rand() % (width - logo_w);
-    float y = rand() % (height - logo_h);
-    float vx = 5.0, vy = 5.0;
+    // --- Charger l'image si possible ---
+    int img_w = 0, img_h = 0;
+    unsigned char *alpha_mask = NULL; // On stocke juste l'alpha pour coloriser
+    unsigned char *current_bgra = NULL;
+    XImage *ximg = NULL;
+
+    if (img_path) {
+        int w, h, c;
+        unsigned char *file_data = stbi_load(img_path, &w, &h, &c, 4);
+        if (file_data) {
+            // Redimensionner si trop grand ou trop petit
+            int target_w = 200;
+            // Ratio
+            float ratio = (float)h / (float)w;
+            int target_h = (int)(target_w * ratio);
+            
+            unsigned char *resized = resize_image(file_data, w, h, 4, target_w, target_h);
+            stbi_image_free(file_data);
+            
+            if (resized) {
+                img_w = target_w;
+                img_h = target_h;
+                
+                // Extraire l'alpha mask
+                alpha_mask = malloc(img_w * img_h);
+                // Pré-allouer le buffer BGRA pour X11
+                current_bgra = malloc(img_w * img_h * 4);
+                
+                for(int i=0; i < img_w * img_h; i++) {
+                    // Si l'image source est blanche/transparente, l'alpha est en [3].
+                    // Si c'est un PNG noir et blanc, on peut assumer que la luminosité est l'alpha, 
+                    // ou utiliser l'alpha channel direct.
+                    // Le logo wikipedia est Noir sur Transparent.
+                    // Si on veut le coloriser, on utilise l'alpha pur.
+                    alpha_mask[i] = resized[i*4 + 3]; 
+                }
+                
+                free(resized); // On a copié ce qu'il fallait (alpha)
+                
+                // Créer XImage
+                ximg = XCreateImage(dpy, DefaultVisual(dpy, screen), DefaultDepth(dpy, screen),
+                                    ZPixmap, 0, (char *)current_bgra, img_w, img_h, 32, 0);
+            }
+        }
+    }
     
-    // Couleurs vives
+    // Si pas d'image, on définit des dimensions par défaut pour le fallback vectoriel
+    int bounce_w = (ximg) ? img_w : 160;
+    int bounce_h = (ximg) ? img_h : 70;
+
+    float x = rand() % (width - bounce_w);
+    float y = rand() % (height - bounce_h);
+    float vx = 4.0, vy = 4.0;
+    
+    // Palette
     unsigned long colors[] = {0xFF0000, 0x00FF00, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF, 0xFFFFFF, 0xFFA500};
     int color_idx = rand() % 8;
+    int prev_color_idx = -1;
+
+    // Fallback fonts
+    XFontStruct *font = NULL;
+    if (!ximg) {
+        XSetLineAttributes(dpy, gc, 3, LineSolid, CapRound, JoinRound);
+        font = XLoadQueryFont(dpy, "-*-helvetica-bold-r-*-*-34-*-*-*-*-*-*-*");
+        if (!font) font = XLoadQueryFont(dpy, "-*-*-bold-r-*-*-24-*-*-*-*-*-*-*");
+        if (!font) font = XLoadQueryFont(dpy, "fixed");
+        if (font) XSetFont(dpy, gc, font->fid);
+    }
     
     time_t start = time(NULL);
-    
-    // Durée 1 minute (60s)
     while (time(NULL) - start < 60) {
-        XClearWindow(dpy, win);
-        
+        // Logique de rebond
         x += vx;
         y += vy;
         
         int hit = 0;
         if (x <= 0) { x = 0; vx = -vx; hit = 1; }
-        else if (x + logo_w >= width) { x = width - logo_w; vx = -vx; hit = 1; }
+        else if (x + bounce_w >= width) { x = width - bounce_w; vx = -vx; hit = 1; }
         
         if (y <= 0) { y = 0; vy = -vy; hit = 1; }
-        else if (y + logo_h >= height) { y = height - logo_h; vy = -vy; hit = 1; }
+        else if (y + bounce_h >= height) { y = height - bounce_h; vy = -vy; hit = 1; }
         
         if (hit) {
             color_idx = (color_idx + 1) % 8;
         }
-        
-        XSetForeground(dpy, gc, colors[color_idx]);
-        
-        // Dessin du logo "DVD" stylisé
-        // Ellipse contour
-        XDrawArc(dpy, win, gc, (int)x, (int)y, logo_w, logo_h, 0, 360*64);
-        
-        // Texte Centré
-        const char *txt = "DVD";
-        int txt_w = font ? XTextWidth(font, txt, 3) : 20;
-        int txt_h = font ? (font->ascent) : 10;
-        
-        XDrawString(dpy, win, gc, (int)x + (logo_w - txt_w)/2, (int)y + (logo_h + txt_h)/2 - 5, txt, 3);
-        
-        // Petit disque plein en dessous
-        XFillArc(dpy, win, gc, (int)x + logo_w/2 - 25, (int)y + logo_h - 8, 50, 16, 0, 360*64);
 
+        XClearWindow(dpy, win);
+        
+        if (ximg) {
+            // --- MODE IMAGE COLORISÉE ---
+            // Si la couleur a changé (ou premier passage), on recrée le buffer pixels
+            if (color_idx != prev_color_idx) {
+                unsigned long c = colors[color_idx];
+                unsigned char r = (c >> 16) & 0xFF;
+                unsigned char g = (c >> 8) & 0xFF;
+                unsigned char b = (c) & 0xFF;
+                
+                for (int i = 0; i < img_w * img_h; i++) {
+                    unsigned char a = alpha_mask[i];
+                    // BGRA
+                    // Si alpha > 0, on met la couleur. Sinon 0 (transparent).
+                    // Mais attention, XPutImage copie tout. Si on veut de la transparence sur Overlay,
+                    // Soit on utilise ShapeMask (compliqué pour anti-aliasing partiel), 
+                    // Soit on assume que le "fond" est noir/transparent (ce qui est le cas de overlay window).
+                    
+                    // Note: Notre create_overlay_window crée une fenêtre ARGB si possible (compositing).
+                    // Si on a le compositing, on peut utiliser le canal alpha du BGRA.
+                    // Si on ne l'a pas, ça fera du noir.
+                    
+                    // Premultiplied alpha n'est pas standard X11 core, mais pour un visual 32bit:
+                    // Pixel = (A << 24) | (R << 16) | (G << 8) | B
+                    // Souvent X11 attend un RGB prémultiplié pour la compo? Ça dépend du compositeur.
+                    // Essayons standard non-prémultiplié ou simple mapping.
+                    
+                    current_bgra[i*4 + 0] = b;
+                    current_bgra[i*4 + 1] = g;
+                    current_bgra[i*4 + 2] = r;
+                    current_bgra[i*4 + 3] = a; 
+                }
+                prev_color_idx = color_idx;
+            }
+            
+            XPutImage(dpy, win, DefaultGC(dpy, screen), ximg, 0, 0, (int)x, (int)y, img_w, img_h);
+        } else {
+            // --- MODE FALLBACK VECTORIEL ---
+            XSetForeground(dpy, gc, colors[color_idx]);
+            XDrawArc(dpy, win, gc, (int)x, (int)y, bounce_w, bounce_h, 0, 360*64);
+            const char *txt = "DVD";
+            int txt_w = font ? XTextWidth(font, txt, 3) : 20;
+            int txt_h = font ? (font->ascent) : 10;
+            XDrawString(dpy, win, gc, (int)x + (bounce_w - txt_w)/2, (int)y + (bounce_h + txt_h)/2 - 5, txt, 3);
+            XFillArc(dpy, win, gc, (int)x + bounce_w/2 - 25, (int)y + bounce_h - 8, 50, 16, 0, 360*64);
+        }
+        
         XFlush(dpy);
-        usleep(16000); // ~60 FPS
+        usleep(16000); 
     }
 
+    if (ximg) {
+        ximg->data = NULL; // Éviter free par XDestroyImage car alloué par nous
+        XDestroyImage(ximg);
+        free(current_bgra);
+        free(alpha_mask);
+    }
     if (font) XFreeFont(dpy, font);
     XFreeGC(dpy, gc);
     XDestroyWindow(dpy, win);
@@ -1607,11 +1692,50 @@ static void show_dvdbounce(const char *img_path) {
 }
 
 void execute_dvdbounce(const char *url) {
-    // Téléchargement optionnel (non implémenté ici pour simplifier, on utilise le rect)
+    char filepath[512] = {0};
+    char *username = get_username();
+    snprintf(filepath, sizeof(filepath), "/home/%s/.cache/wallchange_dvd.png", username);
+    free(username);
+    
+    // Créer répertoire si besoin
+    char *dir = strdup(filepath);
+    char *slash = strrchr(dir, '/');
+    if (slash) *slash = '\0';
+    mkdir(dir, 0755);
+    free(dir);
+
+    // URL par défaut si vide
+    // Logo DVD transparent (Wikipedia)
+    const char *default_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9b/DVD_logo.svg/320px-DVD_logo.svg.png";
+    const char *target = (url && strlen(url) > 0) ? url : NULL;
+
+    int needs_download = 0;
+    if (target) {
+        // Si URL perso, on télécharge toujours (ou on pourrait hasher l'url pour le cache mais simple ici)
+        needs_download = 1;
+    } else {
+        // Si defaut, on vérifie si existe déjà
+        if (access(filepath, F_OK) == -1) {
+            target = default_url;
+            needs_download = 1;
+        } else {
+            // Existe déjà, on l'utilise
+        }
+    }
+
+    if (needs_download && target) {
+        download_image(target, filepath);
+    }
+    
+    // Si fichier n'existe pas (échec download), on passe NULL pour activer le fallback vectoriel
+    if (access(filepath, F_OK) == -1) {
+        filepath[0] = '\0';
+    }
+
     pid_t pid = fork();
     if (pid == 0) {
         srand(time(NULL) ^ getpid());
-        show_dvdbounce(NULL);
+        show_dvdbounce(filepath[0] ? filepath : NULL);
         exit(0);
     }
 }
