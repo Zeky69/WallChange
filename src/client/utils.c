@@ -2019,12 +2019,16 @@ static void show_nyancat() {
     };
     int rainbow_h = 6;
     
-    #define TRAIL_LEN 20
+    // Augmenter la taille du trail pour qu'il ne disparaisse pas (Paint style)
+    // 15 secondes * 40 FPS approx = 600 points
+    #define TRAIL_LEN 800
     XPoint points[TRAIL_LEN];
-    for(int i=0; i<TRAIL_LEN; i++) { points[i].x = -100; points[i].y = -100; }
+    for(int i=0; i<TRAIL_LEN; i++) { points[i].x = -10000; points[i].y = -10000; }
     int head = 0;
+    int point_count = 0;
     
     time_t start = time(NULL);
+    // Boucle de 15 secondes
     while (time(NULL) - start < 15) {
         XClearWindow(dpy, win);
         
@@ -2037,22 +2041,27 @@ static void show_nyancat() {
             points[head].x = root_x;
             points[head].y = root_y;
             head = (head + 1) % TRAIL_LEN;
+            if (point_count < TRAIL_LEN) point_count++;
             
             // Draw Trail
             for (int k = 0; k < 6; k++) { // 6 colors
                 XSetForeground(dpy, gc, rainbow[k]);
-                XPoint segment[TRAIL_LEN];
-                for (int i = 0; i < TRAIL_LEN; i++) {
+                
+                // Dessiner tous les points accumulés
+                for (int i = 0; i < point_count; i++) {
+                    // On remonte le temps depuis head
                     int idx = (head - 1 - i + TRAIL_LEN) % TRAIL_LEN;
-                    segment[i].x = points[idx].x - (img_w/2) - 10; // Offset derrière le chat
-                    // Oscillation de la queue
-                    int wave = (i % 2 == 0) ? 3 : -3;
-                    segment[i].y = points[idx].y + (k * rainbow_h) - (img_h/2) + wave;
-                }
-                // Tracer des carrés pour faire le trail pixelisé
-                for(int i=0; i<TRAIL_LEN; i++) {
-                    if (segment[i].x > -50) // Ne pas dessiner hors écran
-                       XFillRectangle(dpy, win, gc, segment[i].x, segment[i].y, 10, rainbow_h);
+                    
+                    if (points[idx].x < -500) continue;
+
+                    int x = points[idx].x - (img_w/2) - 10; // Offset derrière le chat
+                    
+                    // Oscillation de la queue (basée sur l'index 'i' qui représente le temps passé)
+                    int wave = (i % 4 < 2) ? 3 : -3; 
+                    int y = points[idx].y + (k * rainbow_h) - (img_h/2) + wave;
+                    
+                    // Rectangle de traînée
+                    XFillRectangle(dpy, win, gc, x, y, 12, rainbow_h);
                 }
             }
             
@@ -2063,7 +2072,7 @@ static void show_nyancat() {
         }
         
         XFlush(dpy);
-        usleep(30000); 
+        usleep(25000); // ~40 FPS
     }
     
     if (cat_img) {
@@ -2107,7 +2116,7 @@ static void show_fly() {
 
     // PNG transparent d'une mouche vue de dessus
     if (access(filepath, F_OK) == -1) {
-        download_image("https://pngimg.com/uploads/fly/fly_PNG3946.png", filepath);
+        download_image("https://pngimg.com/uploads/fly/fly_PNG3954.png", filepath);
     }
     
     int w, h, c;
