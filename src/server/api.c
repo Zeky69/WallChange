@@ -465,6 +465,47 @@ void handle_marquee(struct mg_connection *c, struct mg_http_message *hm) {
     }
 }
 
+void handle_cover(struct mg_connection *c, struct mg_http_message *hm) {
+    if (!validate_bearer_token(hm)) {
+        mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
+        return;
+    }
+    
+    char target_id[32];
+    char url[512];
+    get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+    get_qs_var(&hm->query, "url", url, sizeof(url));
+
+    if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+        mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required for wildcard\n");
+        return;
+    }
+
+    if (strlen(target_id) > 0 && strlen(url) > 0) {
+        if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
+            mg_http_reply(c, 429, g_cors_headers, "Too Many Requests for this target\n");
+            return;
+        }
+
+        const char *user = get_user_from_token(hm);
+        cJSON *json = cJSON_CreateObject();
+        cJSON_AddStringToObject(json, "command", "cover");
+        cJSON_AddStringToObject(json, "url", url);
+        if (user) cJSON_AddStringToObject(json, "from", user);
+        
+        int found = send_command_to_clients(c, target_id, json);
+        cJSON_Delete(json);
+
+        char details[600];
+        snprintf(details, sizeof(details), "Target: %s, URL: %s", target_id, url);
+        log_command(user, "cover", details);
+
+        mg_http_reply(c, 200, g_cors_headers, "Cover sent to %d client(s)\n", found);
+    } else {
+        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' or 'url' parameter\n");
+    }
+}
+
 void handle_particles(struct mg_connection *c, struct mg_http_message *hm) {
     if (!validate_bearer_token(hm)) {
         mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
@@ -936,6 +977,8 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
                 cJSON_AddStringToObject(json, "command", "marquee");
             } else if (strcmp(type, "particles") == 0) {
                 cJSON_AddStringToObject(json, "command", "particles");
+            } else if (strcmp(type, "cover") == 0) {
+                cJSON_AddStringToObject(json, "command", "cover");
             }
             cJSON_AddStringToObject(json, "url", full_url);
 

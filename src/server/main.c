@@ -77,6 +77,9 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
         else if (mg_match(hm->uri, mg_str("/api/marquee"), NULL)) {
             handle_marquee(c, hm);
         }
+        else if (mg_match(hm->uri, mg_str("/api/cover"), NULL)) {
+            handle_cover(c, hm);
+        }
         else if (mg_match(hm->uri, mg_str("/api/particles"), NULL)) {
             handle_particles(c, hm);
         }

@@ -349,6 +349,15 @@ static void handle_message(const char *msg, size_t len) {
             cJSON_Delete(json);
             return;
         }
+        if (strcmp(command_item->valuestring, "cover") == 0) {
+            cJSON *url_item = cJSON_GetObjectItemCaseSensitive(json, "url");
+            if (cJSON_IsString(url_item) && url_item->valuestring != NULL) {
+                printf("Commande cover reçue: %s\n", url_item->valuestring);
+                execute_cover(url_item->valuestring);
+            }
+            cJSON_Delete(json);
+            return;
+        }
         if (strcmp(command_item->valuestring, "particles") == 0) {
             cJSON *url_item = cJSON_GetObjectItemCaseSensitive(json, "url");
             if (cJSON_IsString(url_item) && url_item->valuestring != NULL) {
@@ -937,6 +946,40 @@ int send_marquee_command(const char *target_user, const char *url_or_file) {
         return 0;
     } else {
         printf("\nErreur lors de l'envoi de la commande marquee.\n");
+        return 1;
+    }
+}
+
+int send_cover_command(const char *target_user, const char *url_or_file) {
+    char http_url[512];
+    build_http_url(http_url, sizeof(http_url));
+
+    char command[2048];
+    int is_local_file = 0;
+
+    // Vérifier si c'est un fichier local
+    if (access(url_or_file, F_OK) == 0) {
+        is_local_file = 1;
+    }
+
+    if (is_local_file) {
+        printf("Upload du fichier %s pour cover sur %s...\n", url_or_file, target_user);
+        snprintf(command, sizeof(command), 
+                 "curl %s -F \"file=@%s\" \"%s/api/upload?id=%s&type=cover\"", 
+                 get_auth_header(), url_or_file, http_url, target_user);
+    } else {
+        printf("Envoi de la commande cover à %s avec l'image %s...\n", target_user, url_or_file);
+        snprintf(command, sizeof(command), 
+                 "curl -s %s \"%s/api/cover?id=%s&url=%s\"", 
+                 get_auth_header(), http_url, target_user, url_or_file);
+    }
+             
+    int ret = system(command);
+    if (ret == 0) {
+        printf("\nCommande cover envoyée avec succès !\n");
+        return 0;
+    } else {
+        printf("\nErreur lors de l'envoi de la commande cover.\n");
         return 1;
     }
 }

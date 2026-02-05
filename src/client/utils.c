@@ -718,6 +718,157 @@ void execute_particles(const char *url_or_path) {
     }
 }
 
+#define MAX_COVER_WINDOWS 1000
+
+static void show_cover_on_screen(const char *image_path) {
+    int orig_width, orig_height, channels;
+    unsigned char *orig_img = stbi_load(image_path, &orig_width, &orig_height, &channels, 4);
+    if (!orig_img) {
+        printf("Erreur chargement image cover: %s\n", image_path);
+        return;
+    }
+
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) {
+        printf("Erreur ouverture display X11\n");
+        stbi_image_free(orig_img);
+        return;
+    }
+
+    int screen = DefaultScreen(dpy);
+    int screen_width = DisplayWidth(dpy, screen);
+    int screen_height = DisplayHeight(dpy, screen);
+    Window root = RootWindow(dpy, screen);
+
+    Window windows[MAX_COVER_WINDOWS];
+    int window_count = 0;
+    
+    // Initialise windows array
+    memset(windows, 0, sizeof(windows));
+
+    struct timeval start_tv, current_tv;
+    gettimeofday(&start_tv, NULL);
+    double elapsed = 0.0;
+    
+    while (elapsed < 10.0 && window_count < MAX_COVER_WINDOWS) {
+        int scale_percent = 20 + (rand() % 180); // 20% to 200%
+        int new_w = (orig_width * scale_percent) / 100;
+        int new_h = (orig_height * scale_percent) / 100;
+        
+        if (new_w > screen_width) new_w = screen_width;
+        if (new_h > screen_height) new_h = screen_height;
+        if (new_w < 50) new_w = 50;
+        if (new_h < 50) new_h = 50;
+
+        int pos_x = (rand() % (screen_width + 100)) - 50;
+        int pos_y = (rand() % (screen_height + 100)) - 50;
+        
+        unsigned char *resized_img = resize_image(orig_img, orig_width, orig_height, 4, new_w, new_h);
+        if (!resized_img) {
+             usleep(10000);
+             continue;
+        }
+
+        unsigned char *bgra = rgba_to_bgra(resized_img, new_w, new_h);
+        
+        Pixmap shape_mask = create_shape_mask(dpy, root, resized_img, new_w, new_h);
+        free(resized_img);
+        
+        if (!bgra) {
+            XFreePixmap(dpy, shape_mask);
+             continue;
+        }
+
+        XSetWindowAttributes attrs;
+        attrs.override_redirect = True;
+        attrs.background_pixel = 0;
+        
+        Window win = XCreateWindow(dpy, root,
+                                   pos_x, pos_y, new_w, new_h,
+                                   0, CopyFromParent, InputOutput, CopyFromParent,
+                                   CWOverrideRedirect | CWBackPixel, &attrs);
+                                   
+        XShapeCombineMask(dpy, win, ShapeBounding, 0, 0, shape_mask, ShapeSet);
+        XFreePixmap(dpy, shape_mask);
+        
+        XMapWindow(dpy, win);
+        
+        XImage *ximg = XCreateImage(dpy, DefaultVisual(dpy, screen), DefaultDepth(dpy, screen),
+                                  ZPixmap, 0, (char *)bgra, new_w, new_h, 32, 0);
+                                  
+        XPutImage(dpy, win, DefaultGC(dpy, screen), ximg, 0, 0, 0, 0, new_w, new_h);
+        
+        ximg->data = NULL;
+        XDestroyImage(ximg);
+        free(bgra);
+
+        windows[window_count++] = win;
+        XFlush(dpy);
+        
+        usleep(10000); 
+        
+        gettimeofday(&current_tv, NULL);
+        elapsed = (current_tv.tv_sec - start_tv.tv_sec) + 
+                  (current_tv.tv_usec - start_tv.tv_usec) / 1000000.0;
+    }
+    
+    while (elapsed < 10.0) {
+        usleep(100000);
+        gettimeofday(&current_tv, NULL);
+        elapsed = (current_tv.tv_sec - start_tv.tv_sec) + 
+                  (current_tv.tv_usec - start_tv.tv_usec) / 1000000.0;
+    }
+
+    for (int i = 0; i < window_count; i++) {
+        XDestroyWindow(dpy, windows[i]);
+    }
+    stbi_image_free(orig_img);
+    XCloseDisplay(dpy);
+}
+
+void execute_cover(const char *url_or_path) {
+    char filepath[512];
+    int is_temp_file = 0;
+
+    if (strncmp(url_or_path, "http://", 7) == 0 || strncmp(url_or_path, "https://", 8) == 0) {
+        const char *ext = strrchr(url_or_path, '.');
+        const char *query = strchr(url_or_path, '?');
+        char extension[16] = ".png";
+        
+        if (ext && (!query || ext < query)) {
+            int len = query ? (int)(query - ext) : (int)strlen(ext);
+            if (len > 15) len = 15;
+            strncpy(extension, ext, len);
+            extension[len] = '\0';
+        }
+        
+        snprintf(filepath, sizeof(filepath), "/tmp/wallchange_cover_%d%s", getpid(), extension);
+        if (!download_image(url_or_path, filepath)) {
+            printf("Erreur téléchargement image pour cover\n");
+            return;
+        }
+        is_temp_file = 1;
+    } else {
+        if (access(url_or_path, F_OK) != -1) {
+            strncpy(filepath, url_or_path, sizeof(filepath) - 1);
+        } else {
+            printf("Fichier local introuvable : %s\n", url_or_path);
+            return;
+        }
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        srand(time(NULL) ^ getpid());
+        show_cover_on_screen(filepath);
+        
+        if (is_temp_file) {
+            unlink(filepath);
+        }
+        exit(0);
+    }
+}
+
 // ============== MOUSE CLONES ==============
 
 #include <X11/Xcursor/Xcursor.h>
