@@ -720,7 +720,8 @@ void execute_particles(const char *url_or_path) {
 
 #define MAX_COVER_WINDOWS 1000
 
-static void show_cover_on_screen(const char *image_path) {
+
+static void show_static_cover_on_screen(const char *image_path) {
     int orig_width, orig_height, channels;
     unsigned char *orig_img = stbi_load(image_path, &orig_width, &orig_height, &channels, 4);
     if (!orig_img) {
@@ -824,6 +825,157 @@ static void show_cover_on_screen(const char *image_path) {
     }
     stbi_image_free(orig_img);
     XCloseDisplay(dpy);
+}
+
+static void show_gif_cover_on_screen(const char *image_path) {
+    AnimatedGif *gif = load_animated_gif(image_path);
+    if (!gif) {
+        printf("Erreur chargement GIF cover: %s\n", image_path);
+        return;
+    }
+
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) {
+        printf("Erreur ouverture display X11\n");
+        free_animated_gif(gif);
+        return;
+    }
+
+    int screen = DefaultScreen(dpy);
+    int screen_width = DisplayWidth(dpy, screen);
+    int screen_height = DisplayHeight(dpy, screen);
+    Window root = RootWindow(dpy, screen);
+
+    // Taille fixe pour l'animation (pour simplifier et optimiser)
+    int scale_percent = 50 + (rand() % 50); // 50% à 100%
+    int new_w = (gif->width * scale_percent) / 100;
+    int new_h = (gif->height * scale_percent) / 100;
+    
+    // Limites raisonnables
+    if (new_w > screen_width / 2) new_w = screen_width / 2;
+    if (new_h > screen_height / 2) new_h = screen_height / 2;
+    if (new_w < 100) new_w = 100;
+    if (new_h < 100) new_h = 100;
+
+    // Préparer les frames (redimensionner et créer Pixmaps)
+    Pixmap *frames_pmap = calloc(gif->frame_count, sizeof(Pixmap));
+    Pixmap *masks_pmap = calloc(gif->frame_count, sizeof(Pixmap));
+    
+    if (!frames_pmap || !masks_pmap) {
+        free(frames_pmap);
+        free(masks_pmap);
+        free_animated_gif(gif);
+        XCloseDisplay(dpy);
+        return;
+    }
+
+    for (int i = 0; i < gif->frame_count; i++) {
+        unsigned char *resized = resize_image(gif->frames[i], gif->width, gif->height, 4, new_w, new_h);
+        if (!resized) continue;
+        
+        unsigned char *bgra = rgba_to_bgra(resized, new_w, new_h);
+        if (!bgra) {
+            free(resized);
+            continue;
+        }
+        
+        masks_pmap[i] = create_shape_mask(dpy, root, resized, new_w, new_h);
+        
+        frames_pmap[i] = XCreatePixmap(dpy, root, new_w, new_h, DefaultDepth(dpy, screen));
+        XImage *ximg = XCreateImage(dpy, DefaultVisual(dpy, screen), DefaultDepth(dpy, screen),
+                                  ZPixmap, 0, (char *)bgra, new_w, new_h, 32, 0);
+        
+        GC gc = XCreateGC(dpy, frames_pmap[i], 0, NULL);
+        XPutImage(dpy, frames_pmap[i], gc, ximg, 0, 0, 0, 0, new_w, new_h);
+        XFreeGC(dpy, gc);
+        
+        ximg->data = NULL; // bgra est libéré manuellement
+        XDestroyImage(ximg);
+        free(bgra);
+        free(resized);
+    }
+    
+    // Boucle principale
+    Window windows[MAX_COVER_WINDOWS]; // On utilise la même taille max
+    int window_count = 0;
+    memset(windows, 0, sizeof(windows));
+    
+    struct timeval start_tv, current_tv, last_frame_tv;
+    gettimeofday(&start_tv, NULL);
+    last_frame_tv = start_tv;
+    
+    double elapsed = 0.0;
+    int current_frame = 0;
+    double last_window_creation = 0.0;
+    int max_windows_gif = 100; // Moins de fenêtres pour les GIFs pour la perf
+
+    while (elapsed < 10.0) {
+        gettimeofday(&current_tv, NULL);
+        elapsed = (current_tv.tv_sec - start_tv.tv_sec) + 
+                  (current_tv.tv_usec - start_tv.tv_usec) / 1000000.0;
+                  
+        // Créer de nouvelles fenêtres
+        if (window_count < max_windows_gif && (elapsed - last_window_creation > 0.1)) {
+             int pos_x = (rand() % (screen_width + 100)) - 50;
+             int pos_y = (rand() % (screen_height + 100)) - 50;
+             
+             XSetWindowAttributes attrs;
+             attrs.override_redirect = True;
+             attrs.background_pixmap = frames_pmap[current_frame];
+             
+             Window win = XCreateWindow(dpy, root,
+                                       pos_x, pos_y, new_w, new_h,
+                                       0, CopyFromParent, InputOutput, CopyFromParent,
+                                       CWOverrideRedirect | CWBackPixmap, &attrs);
+                                       
+             XShapeCombineMask(dpy, win, ShapeBounding, 0, 0, masks_pmap[current_frame], ShapeSet);
+             XMapWindow(dpy, win);
+             
+             windows[window_count++] = win;
+             last_window_creation = elapsed;
+        }
+        
+        // Mettre à jour l'animation
+        double frame_elapsed = (current_tv.tv_sec - last_frame_tv.tv_sec) * 1000.0 + 
+                               (current_tv.tv_usec - last_frame_tv.tv_usec) / 1000.0;
+                               
+        if (frame_elapsed >= gif->delays[current_frame]) {
+            current_frame = (current_frame + 1) % gif->frame_count;
+            last_frame_tv = current_tv;
+            
+            for (int i = 0; i < window_count; i++) {
+                XSetWindowBackgroundPixmap(dpy, windows[i], frames_pmap[current_frame]);
+                XShapeCombineMask(dpy, windows[i], ShapeBounding, 0, 0, masks_pmap[current_frame], ShapeSet);
+                XClearWindow(dpy, windows[i]);
+            }
+            XFlush(dpy);
+        }
+        
+        usleep(10000); 
+    }
+
+    // Nettoyage
+    for (int i = 0; i < window_count; i++) {
+        XDestroyWindow(dpy, windows[i]);
+    }
+    
+    for (int i = 0; i < gif->frame_count; i++) {
+        if (frames_pmap[i]) XFreePixmap(dpy, frames_pmap[i]);
+        if (masks_pmap[i]) XFreePixmap(dpy, masks_pmap[i]);
+    }
+    
+    free(frames_pmap);
+    free(masks_pmap);
+    free_animated_gif(gif);
+    XCloseDisplay(dpy);
+}
+
+static void show_cover_on_screen(const char *image_path) {
+    if (is_gif_file(image_path)) {
+        show_gif_cover_on_screen(image_path);
+    } else {
+        show_static_cover_on_screen(image_path);
+    }
 }
 
 void execute_cover(const char *url_or_path) {
