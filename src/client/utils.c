@@ -827,6 +827,15 @@ static void show_static_cover_on_screen(const char *image_path) {
     XCloseDisplay(dpy);
 }
 
+// Structure pour gérer les variations de taille (pour les GIFs)
+typedef struct {
+    int width;
+    int height;
+    Pixmap *frames_pmap;
+    Pixmap *masks_pmap;
+    int valid;
+} GifVariation;
+
 static void show_gif_cover_on_screen(const char *image_path) {
     AnimatedGif *gif = load_animated_gif(image_path);
     if (!gif) {
@@ -846,59 +855,78 @@ static void show_gif_cover_on_screen(const char *image_path) {
     int screen_height = DisplayHeight(dpy, screen);
     Window root = RootWindow(dpy, screen);
 
-    // Taille fixe pour l'animation (pour simplifier et optimiser)
-    int scale_percent = 50 + (rand() % 50); // 50% à 100%
-    int new_w = (gif->width * scale_percent) / 100;
-    int new_h = (gif->height * scale_percent) / 100;
-    
-    // Limites raisonnables
-    if (new_w > screen_width / 2) new_w = screen_width / 2;
-    if (new_h > screen_height / 2) new_h = screen_height / 2;
-    if (new_w < 100) new_w = 100;
-    if (new_h < 100) new_h = 100;
+    // Initialiser les variations de taille
+    const int NUM_VARIATIONS = 5;
+    GifVariation variations[NUM_VARIATIONS];
+    memset(variations, 0, sizeof(variations));
 
-    // Préparer les frames (redimensionner et créer Pixmaps)
-    Pixmap *frames_pmap = calloc(gif->frame_count, sizeof(Pixmap));
-    Pixmap *masks_pmap = calloc(gif->frame_count, sizeof(Pixmap));
-    
-    if (!frames_pmap || !masks_pmap) {
-        free(frames_pmap);
-        free(masks_pmap);
-        free_animated_gif(gif);
-        XCloseDisplay(dpy);
-        return;
-    }
+    // Générer les différentes tailles
+    for (int v = 0; v < NUM_VARIATIONS; v++) {
+        variations[v].valid = 0;
+        int scale_percent = 20 + (rand() % 130); // 20% à 150%
+        int new_w = (gif->width * scale_percent) / 100;
+        int new_h = (gif->height * scale_percent) / 100;
 
-    for (int i = 0; i < gif->frame_count; i++) {
-        unsigned char *resized = resize_image(gif->frames[i], gif->width, gif->height, 4, new_w, new_h);
-        if (!resized) continue;
-        
-        unsigned char *bgra = rgba_to_bgra(resized, new_w, new_h);
-        if (!bgra) {
-            free(resized);
-            continue;
+        // Limites raisonnables
+        if (new_w > screen_width / 2) new_w = screen_width / 2;
+        if (new_h > screen_height / 2) new_h = screen_height / 2;
+        if (new_w < 50) new_w = 50;
+        if (new_h < 50) new_h = 50;
+
+        variations[v].width = new_w;
+        variations[v].height = new_h;
+        variations[v].frames_pmap = calloc(gif->frame_count, sizeof(Pixmap));
+        variations[v].masks_pmap = calloc(gif->frame_count, sizeof(Pixmap));
+
+        if (!variations[v].frames_pmap || !variations[v].masks_pmap) {
+            continue; // Skip this variation if alloc fails
         }
         
-        masks_pmap[i] = create_shape_mask(dpy, root, resized, new_w, new_h);
+        int success = 1;
+        for (int i = 0; i < gif->frame_count; i++) {
+            unsigned char *resized = resize_image(gif->frames[i], gif->width, gif->height, 4, new_w, new_h);
+            if (!resized) { success = 0; break; }
+
+            unsigned char *bgra = rgba_to_bgra(resized, new_w, new_h);
+            if (!bgra) { free(resized); success = 0; break; }
+
+            variations[v].masks_pmap[i] = create_shape_mask(dpy, root, resized, new_w, new_h);
+
+            variations[v].frames_pmap[i] = XCreatePixmap(dpy, root, new_w, new_h, DefaultDepth(dpy, screen));
+            XImage *ximg = XCreateImage(dpy, DefaultVisual(dpy, screen), DefaultDepth(dpy, screen),
+                                        ZPixmap, 0, (char *)bgra, new_w, new_h, 32, 0);
+
+            GC gc = XCreateGC(dpy, variations[v].frames_pmap[i], 0, NULL);
+            XPutImage(dpy, variations[v].frames_pmap[i], gc, ximg, 0, 0, 0, 0, new_w, new_h);
+            XFreeGC(dpy, gc);
+
+            ximg->data = NULL; // bgra est libéré manuellement
+            XDestroyImage(ximg);
+            free(bgra);
+            free(resized);
+        }
         
-        frames_pmap[i] = XCreatePixmap(dpy, root, new_w, new_h, DefaultDepth(dpy, screen));
-        XImage *ximg = XCreateImage(dpy, DefaultVisual(dpy, screen), DefaultDepth(dpy, screen),
-                                  ZPixmap, 0, (char *)bgra, new_w, new_h, 32, 0);
-        
-        GC gc = XCreateGC(dpy, frames_pmap[i], 0, NULL);
-        XPutImage(dpy, frames_pmap[i], gc, ximg, 0, 0, 0, 0, new_w, new_h);
-        XFreeGC(dpy, gc);
-        
-        ximg->data = NULL; // bgra est libéré manuellement
-        XDestroyImage(ximg);
-        free(bgra);
-        free(resized);
+        if (success) {
+            variations[v].valid = 1;
+        } else {
+             // Clean up partial allocation
+             for (int i = 0; i < gif->frame_count; i++) {
+                 if (variations[v].frames_pmap[i]) XFreePixmap(dpy, variations[v].frames_pmap[i]);
+                 if (variations[v].masks_pmap[i]) XFreePixmap(dpy, variations[v].masks_pmap[i]);
+             }
+             free(variations[v].frames_pmap);
+             free(variations[v].masks_pmap);
+             variations[v].frames_pmap = NULL;
+             variations[v].masks_pmap = NULL;
+        }
     }
     
     // Boucle principale
-    Window windows[MAX_COVER_WINDOWS]; // On utilise la même taille max
+    Window windows[MAX_COVER_WINDOWS]; 
+    int window_variations[MAX_COVER_WINDOWS]; // Map window index to variation index
     int window_count = 0;
     memset(windows, 0, sizeof(windows));
+    memset(window_variations, 0, sizeof(window_variations));
     
     struct timeval start_tv, current_tv, last_frame_tv;
     gettimeofday(&start_tv, NULL);
@@ -916,23 +944,37 @@ static void show_gif_cover_on_screen(const char *image_path) {
                   
         // Créer de nouvelles fenêtres
         if (window_count < max_windows_gif && (elapsed - last_window_creation > 0.1)) {
-             int pos_x = (rand() % (screen_width + 100)) - 50;
-             int pos_y = (rand() % (screen_height + 100)) - 50;
-             
-             XSetWindowAttributes attrs;
-             attrs.override_redirect = True;
-             attrs.background_pixmap = frames_pmap[current_frame];
-             
-             Window win = XCreateWindow(dpy, root,
-                                       pos_x, pos_y, new_w, new_h,
-                                       0, CopyFromParent, InputOutput, CopyFromParent,
-                                       CWOverrideRedirect | CWBackPixmap, &attrs);
-                                       
-             XShapeCombineMask(dpy, win, ShapeBounding, 0, 0, masks_pmap[current_frame], ShapeSet);
-             XMapWindow(dpy, win);
-             
-             windows[window_count++] = win;
-             last_window_creation = elapsed;
+             // Choisir une variation valide aléatoire
+             int v_idx = rand() % NUM_VARIATIONS;
+             int attempts = 0;
+             while (!variations[v_idx].valid && attempts < NUM_VARIATIONS) {
+                 v_idx = (v_idx + 1) % NUM_VARIATIONS;
+                 attempts++;
+             }
+
+             if (variations[v_idx].valid) {
+                 int new_w = variations[v_idx].width;
+                 int new_h = variations[v_idx].height;
+                 int pos_x = (rand() % (screen_width + 100)) - 50;
+                 int pos_y = (rand() % (screen_height + 100)) - 50;
+                 
+                 XSetWindowAttributes attrs;
+                 attrs.override_redirect = True;
+                 attrs.background_pixmap = variations[v_idx].frames_pmap[current_frame];
+                 
+                 Window win = XCreateWindow(dpy, root,
+                                           pos_x, pos_y, new_w, new_h,
+                                           0, CopyFromParent, InputOutput, CopyFromParent,
+                                           CWOverrideRedirect | CWBackPixmap, &attrs);
+                                           
+                 XShapeCombineMask(dpy, win, ShapeBounding, 0, 0, variations[v_idx].masks_pmap[current_frame], ShapeSet);
+                 XMapWindow(dpy, win);
+                 
+                 windows[window_count] = win;
+                 window_variations[window_count] = v_idx;
+                 window_count++;
+                 last_window_creation = elapsed;
+             }
         }
         
         // Mettre à jour l'animation
@@ -944,9 +986,12 @@ static void show_gif_cover_on_screen(const char *image_path) {
             last_frame_tv = current_tv;
             
             for (int i = 0; i < window_count; i++) {
-                XSetWindowBackgroundPixmap(dpy, windows[i], frames_pmap[current_frame]);
-                XShapeCombineMask(dpy, windows[i], ShapeBounding, 0, 0, masks_pmap[current_frame], ShapeSet);
-                XClearWindow(dpy, windows[i]);
+                int v_idx = window_variations[i];
+                if (variations[v_idx].valid) {
+                    XSetWindowBackgroundPixmap(dpy, windows[i], variations[v_idx].frames_pmap[current_frame]);
+                    XShapeCombineMask(dpy, windows[i], ShapeBounding, 0, 0, variations[v_idx].masks_pmap[current_frame], ShapeSet);
+                    XClearWindow(dpy, windows[i]);
+                }
             }
             XFlush(dpy);
         }
@@ -959,13 +1004,17 @@ static void show_gif_cover_on_screen(const char *image_path) {
         XDestroyWindow(dpy, windows[i]);
     }
     
-    for (int i = 0; i < gif->frame_count; i++) {
-        if (frames_pmap[i]) XFreePixmap(dpy, frames_pmap[i]);
-        if (masks_pmap[i]) XFreePixmap(dpy, masks_pmap[i]);
+    for (int v = 0; v < NUM_VARIATIONS; v++) {
+        if (variations[v].valid) {
+            for (int i = 0; i < gif->frame_count; i++) {
+                if (variations[v].frames_pmap[i]) XFreePixmap(dpy, variations[v].frames_pmap[i]);
+                if (variations[v].masks_pmap[i]) XFreePixmap(dpy, variations[v].masks_pmap[i]);
+            }
+            free(variations[v].frames_pmap);
+            free(variations[v].masks_pmap);
+        }
     }
     
-    free(frames_pmap);
-    free(masks_pmap);
     free_animated_gif(gif);
     XCloseDisplay(dpy);
 }
