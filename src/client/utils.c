@@ -1535,6 +1535,7 @@ typedef struct {
     float vx, vy;
     unsigned long color;
     int size;
+    int frame_offset; // Pour des animations désynchronisées
 } Confetti;
 
 static void show_confetti(const char *img_path) {
@@ -1544,10 +1545,10 @@ static void show_confetti(const char *img_path) {
     int screen = DefaultScreen(dpy);
     int width = DisplayWidth(dpy, screen);
     int height = DisplayHeight(dpy, screen);
-    Window root = RootWindow(dpy, screen);
-
-    Visual *visual;
-    int depth;
+    
+    // Création de la fenêtre overlay (transparente si possible)
+    Visual *visual = NULL;
+    int depth = 0;
     Window win = create_overlay_window(dpy, width, height, &visual, &depth);
 
     XMapWindow(dpy, win);
@@ -1556,7 +1557,77 @@ static void show_confetti(const char *img_path) {
 
     GC gc = XCreateGC(dpy, win, 0, NULL);
     
-    int num_confetti = 200;
+    // Chargement de l'image / GIF si présent
+    int use_image = 0;
+    Pixmap *frames_pmap = NULL;
+    int frame_count = 0;
+    int *delays = NULL;
+    int img_w = 48, img_h = 48; // Taille des confettis image
+    
+    if (img_path && img_path[0] != '\0' && access(img_path, F_OK) == 0) {
+        if (is_gif_file(img_path)) {
+            AnimatedGif *gif = load_animated_gif(img_path);
+            if (gif) {
+                use_image = 1;
+                frame_count = gif->frame_count;
+                delays = malloc(frame_count * sizeof(int));
+                memcpy(delays, gif->delays, frame_count * sizeof(int));
+                
+                frames_pmap = calloc(frame_count, sizeof(Pixmap));
+                
+                for (int i = 0; i < frame_count; i++) {
+                    unsigned char *resized = resize_image(gif->frames[i], gif->width, gif->height, 4, img_w, img_h);
+                    if (resized) {
+                        unsigned char *bgra = rgba_to_bgra(resized, img_w, img_h);
+                        free(resized);
+                        
+                        if (bgra) {
+                            frames_pmap[i] = XCreatePixmap(dpy, win, img_w, img_h, depth);
+                            XImage *ximg = XCreateImage(dpy, visual, depth, ZPixmap, 0, (char *)bgra, img_w, img_h, 32, 0);
+                            GC pmap_gc = XCreateGC(dpy, frames_pmap[i], 0, NULL);
+                            XPutImage(dpy, frames_pmap[i], pmap_gc, ximg, 0, 0, 0, 0, img_w, img_h);
+                            XFreeGC(dpy, pmap_gc);
+                            
+                            ximg->data = NULL; // bgra libéré manuellement si besoin, mais XCreateImage prend ownership de data si on ne fait pas gaffe. 
+                            // Ici on a alloué bgra, on le passe à XCreateImage. XDestroyImage va free data.
+                            XDestroyImage(ximg);
+                        }
+                    }
+                }
+                free_animated_gif(gif); // Note: cela free gif->delays donc on a copié avant
+            }
+        } else {
+            // Image statique
+            int w, h, c;
+            unsigned char *img = stbi_load(img_path, &w, &h, &c, 4);
+            if (img) {
+                use_image = 1;
+                frame_count = 1;
+                delays = malloc(sizeof(int));
+                delays[0] = 1000; // Pas utilisé
+                
+                frames_pmap = calloc(1, sizeof(Pixmap));
+                
+                unsigned char *resized = resize_image(img, w, h, 4, img_w, img_h);
+                stbi_image_free(img);
+                
+                if (resized) {
+                    unsigned char *bgra = rgba_to_bgra(resized, img_w, img_h);
+                    free(resized);
+                    if (bgra) {
+                        frames_pmap[0] = XCreatePixmap(dpy, win, img_w, img_h, depth);
+                        XImage *ximg = XCreateImage(dpy, visual, depth, ZPixmap, 0, (char *)bgra, img_w, img_h, 32, 0);
+                        GC pmap_gc = XCreateGC(dpy, frames_pmap[0], 0, NULL);
+                        XPutImage(dpy, frames_pmap[0], pmap_gc, ximg, 0, 0, 0, 0, img_w, img_h);
+                        XFreeGC(dpy, pmap_gc);
+                        XDestroyImage(ximg);
+                    }
+                }
+            }
+        }
+    }
+
+    int num_confetti = 150;
     Confetti *parts = malloc(sizeof(Confetti) * num_confetti);
     unsigned long colors[] = {0xFF0000, 0x00FF00, 0x0000FF, 0xFFFF00, 0xFF00FF, 0x00FFFF, 0xFFFFFF};
     
@@ -1566,11 +1637,32 @@ static void show_confetti(const char *img_path) {
         parts[i].vx = (rand() % 10 - 5) / 2.0;
         parts[i].vy = (rand() % 10 + 5);
         parts[i].color = colors[rand() % 7];
-        parts[i].size = rand() % 10 + 5;
+        parts[i].size = use_image ? img_w : (rand() % 10 + 5);
+        parts[i].frame_offset = rand() % (frame_count > 0 ? frame_count : 1);
     }
 
-    time_t start = time(NULL);
-    while (time(NULL) - start < 10) {
+    struct timeval start_tv, current_tv;
+    gettimeofday(&start_tv, NULL);
+    struct timeval last_frame_tv = start_tv;
+    int global_frame = 0; // Si on veut synchroniser
+    
+    while (1) {
+        gettimeofday(&current_tv, NULL);
+        double elapsed_total = (current_tv.tv_sec - start_tv.tv_sec) + 
+                              (current_tv.tv_usec - start_tv.tv_usec) / 1000000.0;
+        
+        if (elapsed_total >= 10.0) break;
+
+        // Update animation frame based on delays
+        if (use_image && frame_count > 1) {
+            double frame_elapsed = (current_tv.tv_sec - last_frame_tv.tv_sec) * 1000.0 + 
+                                   (current_tv.tv_usec - last_frame_tv.tv_usec) / 1000.0;
+            if (frame_elapsed >= delays[global_frame]) {
+                 global_frame = (global_frame + 1) % frame_count;
+                 last_frame_tv = current_tv;
+            }
+        }
+
         // Redessiner le fond (effacer les confettis précédents)
         XClearWindow(dpy, win);
         
@@ -1581,19 +1673,47 @@ static void show_confetti(const char *img_path) {
             // Gravité / Vent
             parts[i].vx += (rand() % 3 - 1) * 0.1;
             
+            // Reset si sort de l'écran par le bas
             if (parts[i].y > height) {
-                parts[i].y = -10;
+                parts[i].y = -50;
                 parts[i].x = rand() % width;
             }
             
-            XSetForeground(dpy, gc, parts[i].color);
-            XFillRectangle(dpy, win, gc, (int)parts[i].x, (int)parts[i].y, parts[i].size, parts[i].size);
+            if (use_image && frames_pmap && frames_pmap[0]) {
+                // Determine frame index
+                int f_idx = 0;
+                if (frame_count > 1) {
+                    // Option 1: Synchronized
+                    f_idx = global_frame;
+                    
+                    // Option 2: Individual offset (uncomment to desynchronize)
+                    // f_idx = (global_frame + parts[i].frame_offset) % frame_count;
+                }
+                
+                if (frames_pmap[f_idx]) {
+                    // Use XCopyArea to copy Pixmap to Window (fast)
+                    // Note: This requires Pixmap depth == Window depth
+                    XCopyArea(dpy, frames_pmap[f_idx], win, gc, 
+                              0, 0, img_w, img_h, 
+                              (int)parts[i].x, (int)parts[i].y);
+                }
+            } else {
+                XSetForeground(dpy, gc, parts[i].color);
+                XFillRectangle(dpy, win, gc, (int)parts[i].x, (int)parts[i].y, parts[i].size, parts[i].size);
+            }
         }
         
         XFlush(dpy);
-        usleep(30000);
+        usleep(20000); // ~50 FPS
     }
 
+    if (frames_pmap) {
+        for(int i=0; i<frame_count; i++) {
+            if (frames_pmap[i]) XFreePixmap(dpy, frames_pmap[i]);
+        }
+        free(frames_pmap);
+    }
+    if (delays) free(delays);
     free(parts);
     XFreeGC(dpy, gc);
     XDestroyWindow(dpy, win);
