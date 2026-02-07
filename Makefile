@@ -1,6 +1,6 @@
 CC = gcc
 VERSION := $(shell cat VERSION)
-CFLAGS = -O2 -DMG_TLS=2 -Iinclude -Isrc/common -Isrc/server -DVERSION=\"$(VERSION)\"
+CFLAGS = -O2 -DMG_TLS=2 -DMG_MAX_RECV_SIZE=52428800 -Iinclude -Isrc/common -Isrc/server -DVERSION=\"$(VERSION)\"
 LDFLAGS = -lssl -lcrypto
 LDFLAGS_CLIENT = $(LDFLAGS) -lX11 -lXext -lXfixes -lXtst -lXrandr -lm
 LDFLAGS_SERVER = $(LDFLAGS) -lm

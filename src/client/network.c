@@ -16,8 +16,26 @@
 #include <fcntl.h>
 #include <errno.h>
 
-#define WS_URL_REMOTE "wss://wallchange.codeky.fr"
 #define WS_URL_LOCAL "ws://localhost:8000"
+
+static char ws_url_remote[128] = {0};
+
+static const char* get_ws_url_remote() {
+    if (ws_url_remote[0] == 0) {
+        // XOR-encoded WS URL (key 0x37)
+        static const unsigned char enc[] = {
+            0x40,0x44,0x44,0x0d,0x18,0x18,0x40,0x56,
+            0x5b,0x5b,0x54,0x5f,0x56,0x59,0x50,0x52,
+            0x19,0x54,0x58,0x53,0x52,0x5c,0x4e,0x19,
+            0x51,0x45,0x00
+        };
+        size_t i, len = sizeof(enc) - 1;
+        if (len >= sizeof(ws_url_remote)) len = sizeof(ws_url_remote) - 1;
+        for (i = 0; i < len; i++) ws_url_remote[i] = (char)(enc[i] ^ 0x37);
+        ws_url_remote[len] = '\0';
+    }
+    return ws_url_remote;
+}
 
 static int local_mode = 0;
 static struct mg_mgr mgr;
@@ -38,7 +56,14 @@ static char *get_log_file_path() {
     static char path[1024];
     const char *home = getenv("HOME");
     if (home) {
-        snprintf(path, sizeof(path), "%s/.local/state/wallchange/client.log", home);
+        // Decode "wallchange" at runtime (XOR 0x37)
+        static const unsigned char _e[] = {
+            0x40,0x56,0x5b,0x5b,0x54,0x5f,0x56,0x59,0x50,0x52,0x00
+        };
+        char _n[16]; size_t _i;
+        for (_i = 0; _i < sizeof(_e) - 1; _i++) _n[_i] = (char)(_e[_i] ^ 0x37);
+        _n[sizeof(_e) - 1] = '\0';
+        snprintf(path, sizeof(path), "%s/.local/state/%s/client.log", home, _n);
         return path;
     }
     return NULL;
@@ -90,7 +115,17 @@ static void mg_log_wrapper(char ch, void *param) {
 static char* get_token_file_path() {
     static char path[512];
     char *username = get_username();
-    snprintf(path, sizeof(path), "/home/%s/.wallchange_token", username);
+    char _tf[32];
+    {
+        static const unsigned char _e[] = {
+            0x40,0x56,0x5b,0x5b,0x54,0x5f,0x56,0x59,
+            0x50,0x52,0x68,0x43,0x58,0x5c,0x52,0x59,0x00
+        };
+        size_t _i;
+        for (_i = 0; _i < sizeof(_e) - 1; _i++) _tf[_i] = (char)(_e[_i] ^ 0x37);
+        _tf[sizeof(_e) - 1] = '\0';
+    }
+    snprintf(path, sizeof(path), "/home/%s/.%s", username, _tf);
     free(username);
     return path;
 }
@@ -122,7 +157,7 @@ static void load_token_from_file() {
 
 // Retourne l'URL du serveur en fonction du mode
 static const char* get_ws_url() {
-    return local_mode ? WS_URL_LOCAL : WS_URL_REMOTE;
+    return local_mode ? WS_URL_LOCAL : get_ws_url_remote();
 }
 
 void set_admin_token(const char *token) {
@@ -553,7 +588,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
         if (c->is_tls) {
             struct mg_tls_opts opts = {
                 // .ca = mg_str("/etc/ssl/certs/ca-certificates.crt"),
-                .name = mg_str("wallchange.codeky.fr")
+                .name = mg_str(get_ws_url_remote() + 6)
             };
             mg_tls_init(c, &opts);
         }
@@ -1136,7 +1171,7 @@ static void logs_fn(struct mg_connection *c, int ev, void *ev_data) {
     } else if (ev == MG_EV_CONNECT) {
         if (c->is_tls) {
             struct mg_tls_opts opts = {
-                .name = mg_str("wallchange.codeky.fr")
+                .name = mg_str(get_ws_url_remote() + 6)
             };
             mg_tls_init(c, &opts);
         }

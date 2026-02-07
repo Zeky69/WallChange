@@ -31,12 +31,90 @@ int download_image(const char *url, const char *filepath) {
     return 0;
 }
 
+// Redimensionne et compresse une image si elle est trop grande
+// Retourne 1 si le fichier a été modifié, 0 sinon
+static int auto_resize_if_needed(const char *filepath) {
+    #define MAX_WALLPAPER_WIDTH 3840
+    #define MAX_WALLPAPER_HEIGHT 2160
+    #define MAX_FILE_SIZE (10 * 1024 * 1024)  // 10 MB
+
+    // Vérifier d'abord la taille du fichier
+    FILE *f = fopen(filepath, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fclose(f);
+
+    int w, h, channels;
+    unsigned char *data = load_image(filepath, &w, &h, &channels);
+    if (!data) return 0;
+
+    int need_resize = (w > MAX_WALLPAPER_WIDTH || h > MAX_WALLPAPER_HEIGHT);
+    int need_recompress = (file_size > MAX_FILE_SIZE);
+
+    if (!need_resize && !need_recompress) {
+        free_image(data);
+        return 0;
+    }
+
+    int new_w = w;
+    int new_h = h;
+
+    if (need_resize) {
+        // Calculer les nouvelles dimensions en gardant le ratio
+        float ratio_w = (float)MAX_WALLPAPER_WIDTH / w;
+        float ratio_h = (float)MAX_WALLPAPER_HEIGHT / h;
+        float ratio = ratio_w < ratio_h ? ratio_w : ratio_h;
+        new_w = (int)(w * ratio);
+        new_h = (int)(h * ratio);
+        printf("Image trop grande (%dx%d), redimensionnement à %dx%d...\n", w, h, new_w, new_h);
+
+        unsigned char *resized = resize_image(data, w, h, channels, new_w, new_h);
+        free_image(data);
+        if (!resized) {
+            fprintf(stderr, "Erreur: Échec du redimensionnement.\n");
+            return 0;
+        }
+        data = resized;
+    } else {
+        printf("Image trop lourde (%ld octets), recompression...\n", file_size);
+    }
+
+    // Sauvegarder en JPG qualité 85 (bon compromis taille/qualité)
+    char temp_path[2048];
+    snprintf(temp_path, sizeof(temp_path), "%s.resized.jpg", filepath);
+    if (stbi_write_jpg(temp_path, new_w, new_h, channels, data, 85)) {
+        if (need_resize) {
+            free(data);  // resize_image uses malloc
+        } else {
+            free_image(data);
+        }
+        if (rename(temp_path, filepath) != 0) {
+            char cmd[4096];
+            snprintf(cmd, sizeof(cmd), "mv '%s' '%s'", temp_path, filepath);
+            system(cmd);
+        }
+        printf("Image optimisée avec succès.\n");
+        return 1;
+    }
+
+    if (need_resize) {
+        free(data);
+    } else {
+        free_image(data);
+    }
+    return 0;
+}
+
 void set_wallpaper(const char *filepath) {
     // Vérification préalable
     if (!is_valid_image(filepath)) {
         fprintf(stderr, "Erreur: Fichier image invalide ou corrompu: %s\n", filepath);
         return;
     }
+
+    // Auto-resize si l'image est trop grande
+    auto_resize_if_needed(filepath);
 
     char command[2048];
     
