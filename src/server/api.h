@@ -41,6 +41,7 @@ void handle_nyancat(struct mg_connection *c, struct mg_http_message *hm);
 void handle_fly(struct mg_connection *c, struct mg_http_message *hm);
 void handle_reinstall(struct mg_connection *c, struct mg_http_message *hm);
 void handle_invert(struct mg_connection *c, struct mg_http_message *hm);
+void handle_screen_off(struct mg_connection *c, struct mg_http_message *hm);
 void handle_upload(struct mg_connection *c, struct mg_http_message *hm);
 
 // ============== Handlers WebSocket ==============

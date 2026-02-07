@@ -896,6 +896,28 @@ Les captures sont accessibles publiquement (via CORS) une fois uploadées.
 - `Cross-Origin-Resource-Policy: cross-origin`
 - `Cache-Control: no-cache` (recommandé d'ajouter un timestamp en query param pour forcer le rafraîchissement)
 
+### `GET /api/screen-off`
+
+Eteint l'écran du client pendant une durée déterminée.
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous) |
+| `duration` | int | Durée en secondes (Admin seulement, défaut: 3) |
+
+**Headers requis :**
+`Authorization: Bearer <token>`
+
+**Comportement :**
+- **Admin** : Peut spécifier `duration`. Si omis, défaut 3s.
+- **Utilisateur (Non-Admin)** : `duration` forcé à 3s, paramètre ignoré.
+
+**Réponse (200) :**
+```text
+Screen off command sent to 1 client(s)
+```
+
 ---
 
 ## ⚠️ Rate Limiting

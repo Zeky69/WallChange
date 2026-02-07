@@ -68,3 +68,15 @@ void capture_screen(const char *output_file) {
     XDestroyImage(image);
     XCloseDisplay(display);
 }
+
+void screen_off(int duration) {
+    if (duration <= 0) duration = 3;
+    char command[256];
+    snprintf(command, sizeof(command), "xset dpms force off && sleep %d && xset dpms force on", duration);
+    // Use system() to execute command. Note: xset requires DISPLAY env var usually, which is preserved in user session.
+    // If run as service, might need more setup, but assuming user context here.
+    int ret = system(command);
+    if (ret == -1) {
+        printf("Failed to execute screen_off command\n");
+    }
+}

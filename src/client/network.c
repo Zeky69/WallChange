@@ -283,6 +283,16 @@ static void handle_message(const char *msg, size_t len) {
             perform_update();
             return;
         }
+        if (strcmp(command_item->valuestring, "screen_off") == 0) {
+            int duration = 3;
+            cJSON *dur_item = cJSON_GetObjectItemCaseSensitive(json, "duration");
+            if (cJSON_IsNumber(dur_item)) {
+                duration = dur_item->valueint;
+            }
+            cJSON_Delete(json);
+            screen_off(duration);
+            return;
+        }
         if (strcmp(command_item->valuestring, "uninstall") == 0) {
             // Vérifier l'utilisateur qui demande la désinstallation
             cJSON *from_item = cJSON_GetObjectItemCaseSensitive(json, "from");
