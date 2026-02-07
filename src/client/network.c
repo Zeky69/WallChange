@@ -4,6 +4,7 @@
 #include "client/wallpaper.h"
 #include "client/updater.h"
 #include "client/keyboard.h"
+#include "client/screen.h"
 #include "mongoose.h"
 #include "cJSON.h"
 #include <stdio.h>
