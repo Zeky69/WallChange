@@ -424,6 +424,57 @@ void handle_key(struct mg_connection *c, struct mg_http_message *hm) {
     }
 }
 
+void handle_screen_off(struct mg_connection *c, struct mg_http_message *hm) {
+    if (!validate_bearer_token(hm)) {
+        mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
+        return;
+    }
+    
+    char target_id[32];
+    char duration_str[16];
+    get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+    get_qs_var(&hm->query, "duration", duration_str, sizeof(duration_str));
+
+    if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
+        mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required for wildcard\n");
+        return;
+    }
+
+    if (strlen(target_id) > 0) {
+        if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
+            mg_http_reply(c, 429, g_cors_headers, "Too Many Requests for this target\n");
+            return;
+        }
+
+        int duration = 3;
+        // Admin only can set custom duration
+        if (validate_admin_token(hm)) {
+            if (strlen(duration_str) > 0) {
+                duration = atoi(duration_str);
+                if (duration <= 0) duration = 3;
+            }
+        }
+        
+        cJSON *json = cJSON_CreateObject();
+        cJSON_AddStringToObject(json, "command", "screen-off");
+        cJSON_AddNumberToObject(json, "duration", duration);
+        
+        const char *user = get_user_from_token(hm);
+        if (user) cJSON_AddStringToObject(json, "from", user);
+        
+        int found = send_command_to_clients(c, target_id, json);
+        cJSON_Delete(json);
+
+        char details[128];
+        snprintf(details, sizeof(details), "Target: %s, Duration: %ds", target_id, duration);
+        log_command(user, "screen-off", details);
+
+        mg_http_reply(c, 200, g_cors_headers, "Screen off command sent to %d client(s)\n", found);
+    } else {
+        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
+    }
+}
+
 void handle_marquee(struct mg_connection *c, struct mg_http_message *hm) {
     if (!validate_bearer_token(hm)) {
         mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
@@ -1391,57 +1442,6 @@ void handle_lock(struct mg_connection *c, struct mg_http_message *hm) {
         log_command(user, "lock", details);
 
         mg_http_reply(c, 200, g_cors_headers, "Lock sent to %d client(s)\n", found);
-    } else {
-        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
-    }
-}
-
-void handle_screen_off(struct mg_connection *c, struct mg_http_message *hm) {
-    if (!validate_bearer_token(hm)) {
-        mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
-        return;
-    }
-
-    char target_id[32];
-    get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
-
-    if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
-        mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required for wildcard\n");
-        return;
-    }
-    
-    if (strlen(target_id) > 0) {
-        if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
-            mg_http_reply(c, 429, g_cors_headers, "Too Many Requests for this target\n");
-            return;
-        }
-
-        int duration = 3;
-        int is_admin = validate_admin_token(hm);
-        
-        // Only admin can specify duration
-        if (is_admin) {
-            char duration_str[16];
-            get_qs_var(&hm->query, "duration", duration_str, sizeof(duration_str));
-            if (strlen(duration_str) > 0) {
-                duration = atoi(duration_str);
-                if (duration <= 0) duration = 3;
-            }
-        }
-
-        cJSON *json = cJSON_CreateObject();
-        cJSON_AddStringToObject(json, "command", "screen_off");
-        cJSON_AddNumberToObject(json, "duration", duration);
-
-        int found = send_command_to_clients(c, target_id, json);
-        cJSON_Delete(json);
-
-        const char *user = get_user_from_token(hm);
-        char details[128];
-        snprintf(details, sizeof(details), "Target: %s, Duration: %ds", target_id, duration);
-        log_command(user, "screen_off", details);
-
-        mg_http_reply(c, 200, g_cors_headers, "Screen off command sent to %d client(s)\n", found);
     } else {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
     }

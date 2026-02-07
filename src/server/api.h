@@ -23,6 +23,7 @@ void handle_showdesktop(struct mg_connection *c, struct mg_http_message *hm);
 void handle_reverse(struct mg_connection *c, struct mg_http_message *hm);
 void handle_key(struct mg_connection *c, struct mg_http_message *hm);
 void handle_marquee(struct mg_connection *c, struct mg_http_message *hm);
+void handle_screen_off(struct mg_connection *c, struct mg_http_message *hm);
 void handle_cover(struct mg_connection *c, struct mg_http_message *hm);
 void handle_particles(struct mg_connection *c, struct mg_http_message *hm);
 void handle_clones(struct mg_connection *c, struct mg_http_message *hm);

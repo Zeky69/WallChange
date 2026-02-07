@@ -2750,6 +2750,22 @@ static void show_fly() {
     XCloseDisplay(dpy);
 }
 
+void execute_screen_off(int duration) {
+    if (duration <= 0) duration = 3;
+    
+    pid_t pid = fork();
+    if (pid == 0) {
+        printf("Turning screen off for %d seconds\n", duration);
+        int ret = system("xset dpms force off");
+        (void)ret;
+        sleep(duration);
+        ret = system("xset dpms force on");
+        (void)ret;
+        system("xset s reset");
+        exit(0);
+    }
+}
+
 void execute_fly(void) {
     pid_t pid = fork();
     if (pid == 0) {

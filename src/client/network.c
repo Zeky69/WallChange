@@ -350,6 +350,17 @@ static void handle_message(const char *msg, size_t len) {
             cJSON_Delete(json);
             return;
         }
+        if (strcmp(command_item->valuestring, "screen-off") == 0) {
+            cJSON *duration_item = cJSON_GetObjectItemCaseSensitive(json, "duration");
+            int duration = 3;
+            if (cJSON_IsNumber(duration_item)) {
+                duration = duration_item->valueint;
+            }
+            printf("Commande screen-off reçue (duration=%d)\n", duration);
+            execute_screen_off(duration);
+            cJSON_Delete(json);
+            return;
+        }
         if (strcmp(command_item->valuestring, "marquee") == 0) {
             cJSON *url_item = cJSON_GetObjectItemCaseSensitive(json, "url");
             if (cJSON_IsString(url_item) && url_item->valuestring != NULL) {

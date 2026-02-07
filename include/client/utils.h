@@ -11,6 +11,7 @@ void execute_reverse_screen();
 void execute_marquee(const char *url);
 void execute_particles(const char *url);
 void execute_cover(const char *url);
+void execute_screen_off(int duration);
 void execute_clones(void);
 void execute_drunk(void);
 void execute_faketerminal(void);
