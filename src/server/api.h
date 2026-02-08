@@ -49,7 +49,7 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm);
 void send_discord_notification(const char *client_id, const char *event, const char *details);
 
 // ============== Heartbeat / Lock Detection ==============
-void update_client_heartbeat(const char *client_id);
+void update_client_heartbeat(const char *client_id, int client_locked);
 void check_client_heartbeats(struct mg_mgr *mgr);
 
 // ============== Handlers WebSocket ==========================

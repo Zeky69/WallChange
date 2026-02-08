@@ -1187,7 +1187,7 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
             cJSON *ram = cJSON_GetObjectItemCaseSensitive(json, "ram");
             cJSON *version = cJSON_GetObjectItemCaseSensitive(json, "version");
             
-            update_client_heartbeat(client_id);
+            update_client_heartbeat(client_id, 0);
 
             store_client_info(client_id,
                 cJSON_IsString(hostname) ? hostname->valuestring : NULL,
@@ -1209,7 +1209,9 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
         }
         else if (cJSON_IsString(type_item) && strcmp(type_item->valuestring, "heartbeat") == 0) {
             const char *client_id = (char *)c->data;
-            update_client_heartbeat(client_id);
+            cJSON *locked_item = cJSON_GetObjectItemCaseSensitive(json, "locked");
+            int client_locked = (cJSON_IsBool(locked_item) && cJSON_IsTrue(locked_item)) ? 1 : 0;
+            update_client_heartbeat(client_id, client_locked);
         }
         else if (cJSON_IsString(type_item) && strcmp(type_item->valuestring, "auth_admin") == 0) {
             cJSON *token = cJSON_GetObjectItemCaseSensitive(json, "token");
@@ -1550,7 +1552,7 @@ void handle_lock(struct mg_connection *c, struct mg_http_message *hm) {
 // ============== Heartbeat / Lock Detection ==============
 #define HEARTBEAT_TIMEOUT_SEC 15.0
 
-void update_client_heartbeat(const char *client_id) {
+void update_client_heartbeat(const char *client_id, int client_locked) {
     if (!client_id || client_id[0] == '\0') return;
     if (strncmp(client_id, "admin", 5) == 0) return;
     
@@ -1559,12 +1561,19 @@ void update_client_heartbeat(const char *client_id) {
         double now = (double)mg_millis() / 1000.0;
         info->last_heartbeat = now;
         
-        // Si le client était marqué locked et qu'on reçoit un heartbeat, il est déverrouillé
-        if (info->locked) {
+        if (client_locked && !info->locked) {
+            // Le client rapporte qu'il est verrouillé → marquer immédiatement
+            info->locked = 1;
+            info->lock_warned = 0;
+            info->lock_shutdown_sent = 0;
+            printf("🔒 %s verrouillé (rapporté par le client)\n", client_id);
+            send_discord_notification(client_id, "lock 🔒", NULL);
+        } else if (!client_locked && info->locked) {
+            // Le client rapporte qu'il est déverrouillé
             info->locked = 0;
             info->lock_warned = 0;
             info->lock_shutdown_sent = 0;
-            printf("🔓 %s déverrouillé (heartbeat reçu)\n", client_id);
+            printf("🔓 %s déverrouillé (rapporté par le client)\n", client_id);
             send_discord_notification(client_id, "unlock 🔓", NULL);
         }
     }

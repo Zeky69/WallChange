@@ -728,10 +728,14 @@ void network_poll(int timeout_ms) {
     } else {
         time_t now = time(NULL);
 
-        // Envoyer un heartbeat toutes les 10 secondes
+        // Envoyer un heartbeat toutes les 10 secondes (avec état de verrouillage)
         if (now - last_heartbeat_send >= 10) {
             last_heartbeat_send = now;
-            mg_ws_send(ws_conn, "{\"type\":\"heartbeat\"}", 20, WEBSOCKET_OP_TEXT);
+            int locked = is_screen_locked();
+            char hb[64];
+            snprintf(hb, sizeof(hb), "{\"type\":\"heartbeat\",\"locked\":%s}",
+                     locked ? "true" : "false");
+            mg_ws_send(ws_conn, hb, strlen(hb), WEBSOCKET_OP_TEXT);
         }
 
         // Envoyer les infos système périodiquement (toutes les 60 secondes)
