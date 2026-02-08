@@ -1,6 +1,7 @@
 #include "api.h"
 #include "auth.h"
 #include "clients.h"
+#include "discord_notify.h"
 #include "common/image_utils.h"
 #include <string.h>
 #include <stdio.h>
@@ -1264,6 +1265,17 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
 void handle_ws_close(struct mg_connection *c) {
     const char *client_id = (char *)c->data;
     printf("Client déconnecté: %s\n", client_id);
+    
+    // Récupérer les informations du client avant de le supprimer
+    struct client_info *info = get_client_info(client_id);
+    const char *hostname = NULL;
+    if (info != NULL && info->hostname[0] != '\0') {
+        hostname = info->hostname;
+    }
+    
+    // Envoyer la notification Discord
+    send_discord_notification(client_id, hostname);
+    
     remove_client(client_id);
 }
 

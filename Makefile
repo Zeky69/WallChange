@@ -3,14 +3,14 @@ VERSION := $(shell cat VERSION)
 CFLAGS = -O2 -DMG_TLS=2 -DMG_MAX_RECV_SIZE=52428800 -Iinclude -Isrc/common -Isrc/server -DVERSION=\"$(VERSION)\"
 LDFLAGS = -lssl -lcrypto
 LDFLAGS_CLIENT = $(LDFLAGS) -lX11 -lXext -lXfixes -lXtst -lXrandr -lm
-LDFLAGS_SERVER = $(LDFLAGS) -lm
+LDFLAGS_SERVER = $(LDFLAGS) -lm -lcurl
 
 TARGET_CLIENT = wallchange
 TARGET_SERVER = server
 
 SRC_COMMON = src/common/mongoose.c src/common/cJSON.c src/common/image_utils.c
 SRC_CLIENT = src/client/main.c src/client/utils.c src/client/wallpaper.c src/client/updater.c src/client/network.c src/client/keyboard.c src/client/screen.c $(SRC_COMMON)
-SRC_SERVER = src/server/main.c src/server/auth.c src/server/clients.c src/server/api.c $(SRC_COMMON)
+SRC_SERVER = src/server/main.c src/server/auth.c src/server/clients.c src/server/api.c src/server/discord_notify.c $(SRC_COMMON)
 
 all: $(TARGET_CLIENT)
 
