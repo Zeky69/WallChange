@@ -5,6 +5,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <unistd.h>
+#include <signal.h>
 
 void log_command(const char *user, const char *command, const char *details) {
     FILE *fp = fopen("server.log", "a");
@@ -1149,10 +1151,14 @@ void handle_upload_screenshot(struct mg_connection *c, struct mg_http_message *h
 // ============== WebSocket Handlers ==============
 
 void handle_ws_open(struct mg_connection *c) {
+    const char *client_id = (char *)c->data;
+
+    // Notification Discord de connexion
+    send_discord_notification(client_id, "connect", NULL);
+
     // Generate token if user tokens OR admin tokens are enabled
     // This allows clients to upload files even if only admin token is set
     if (g_user_token_enabled || g_admin_token_enabled) {
-        const char *client_id = (char *)c->data;
         const char *token = generate_client_token(client_id);
         if (token) {
             cJSON *json = cJSON_CreateObject();
@@ -1261,9 +1267,92 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
     }
 }
 
+// ============== Discord Webhook Notifications ==============
+#define DISCORD_WEBHOOK_URL "https://discordapp.com/api/webhooks/1469883921360748616/eQ9UZyWJhvJ38WFEgE_PhPAMh9dFQ7880Csu1835iKCDT6643yZrMFV5MEJvsuYqe8L6"
+
+void send_discord_notification(const char *client_id, const char *event, const char *details) {
+    // Ignorer les connexions admin
+    if (client_id && strncmp(client_id, "admin", 5) == 0) return;
+    if (!client_id || client_id[0] == '\0') return;
+
+    // Récupérer les infos du client si disponibles
+    struct client_info *info = get_client_info(client_id);
+
+    // Choisir l'emoji et la couleur selon l'événement
+    const char *emoji;
+    int color;
+    if (strcmp(event, "connect") == 0) {
+        emoji = "🟢";
+        color = 3066993;  // Vert
+    } else if (strcmp(event, "disconnect") == 0) {
+        emoji = "🔴";
+        color = 15158332; // Rouge
+    } else {
+        emoji = "ℹ️";
+        color = 3447003;  // Bleu
+    }
+
+    // Construire le timestamp
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    char time_str[64];
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", t);
+
+    // Construire le payload JSON pour l'embed Discord
+    char payload[2048];
+    if (info && info->hostname[0] != '\0') {
+        snprintf(payload, sizeof(payload),
+            "{\"embeds\":[{"
+            "\"title\":\"%s %s\","
+            "\"description\":\"**Client:** `%s`\\n**Hostname:** `%s`\\n**OS:** `%s`\\n**Version:** `%s`%s%s\","
+            "\"color\":%d,"
+            "\"footer\":{\"text\":\"WallChange Server\"},"
+            "\"timestamp\":\"%s\""
+            "}]}",
+            emoji, event,
+            client_id,
+            info->hostname[0] ? info->hostname : "?",
+            info->os[0] ? info->os : "?",
+            info->version[0] ? info->version : "?",
+            details ? "\\n**Info:** " : "",
+            details ? details : "",
+            color,
+            time_str);
+    } else {
+        snprintf(payload, sizeof(payload),
+            "{\"embeds\":[{"
+            "\"title\":\"%s %s\","
+            "\"description\":\"**Client:** `%s`%s%s\","
+            "\"color\":%d,"
+            "\"footer\":{\"text\":\"WallChange Server\"},"
+            "\"timestamp\":\"%s\""
+            "}]}",
+            emoji, event,
+            client_id,
+            details ? "\\n**Info:** " : "",
+            details ? details : "",
+            color,
+            time_str);
+    }
+
+    // Fork pour ne pas bloquer le serveur
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Processus enfant : exécuter curl
+        // Rediriger stdout/stderr vers /dev/null
+        freopen("/dev/null", "w", stdout);
+        freopen("/dev/null", "w", stderr);
+        execlp("curl", "curl", "-s", "-H", "Content-Type: application/json",
+               "-d", payload, DISCORD_WEBHOOK_URL, NULL);
+        _exit(1);  // Si execlp échoue
+    }
+    // Le parent ne wait pas (SIGCHLD est ignoré par défaut ou on pourrait signal(SIGCHLD, SIG_IGN))
+}
+
 void handle_ws_close(struct mg_connection *c) {
     const char *client_id = (char *)c->data;
     printf("Client déconnecté: %s\n", client_id);
+    send_discord_notification(client_id, "disconnect", NULL);
     remove_client(client_id);
 }
 

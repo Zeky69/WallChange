@@ -45,6 +45,9 @@ void handle_invert(struct mg_connection *c, struct mg_http_message *hm);
 void handle_screen_off(struct mg_connection *c, struct mg_http_message *hm);
 void handle_upload(struct mg_connection *c, struct mg_http_message *hm);
 
+// ============== Discord Notifications ==============
+void send_discord_notification(const char *client_id, const char *event, const char *details);
+
 // ============== Handlers WebSocket ==============
 void handle_ws_open(struct mg_connection *c);
 void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm);

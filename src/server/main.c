@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -190,6 +191,9 @@ static void print_help(const char *prog) {
 int main(int argc, char *argv[]) {
     struct mg_mgr mgr;
     int port = 8000;
+    
+    // Ignorer SIGCHLD pour éviter les processus zombies (Discord webhook forks)
+    signal(SIGCHLD, SIG_IGN);
     
     // Parser les arguments
     for (int i = 1; i < argc; i++) {
