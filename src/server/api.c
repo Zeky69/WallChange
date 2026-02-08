@@ -1154,8 +1154,7 @@ void handle_upload_screenshot(struct mg_connection *c, struct mg_http_message *h
 void handle_ws_open(struct mg_connection *c) {
     const char *client_id = (char *)c->data;
 
-    // Notification Discord de connexion
-    send_discord_notification(client_id, "connect", NULL);
+    // La notification Discord de connexion sera envoyée après réception des infos système
 
     // Generate token if user tokens OR admin tokens are enabled
     // This allows clients to upload files even if only admin token is set
@@ -1206,6 +1205,19 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
                    cJSON_IsString(cpu) ? cpu->valuestring : "?",
                    cJSON_IsString(ram) ? ram->valuestring : "?",
                    cJSON_IsString(version) ? version->valuestring : "?");
+
+            // Envoyer la notification Discord de connexion (une seule fois, avec les détails)
+            struct client_info *ci = get_client_info(client_id);
+            if (ci && !ci->connect_notified) {
+                ci->connect_notified = 1;
+                char details[512];
+                snprintf(details, sizeof(details),
+                    "**Uptime:** `%s`\\n**CPU:** `%s`\\n**RAM:** `%s`",
+                    cJSON_IsString(uptime) ? uptime->valuestring : "?",
+                    cJSON_IsString(cpu) ? cpu->valuestring : "?",
+                    cJSON_IsString(ram) ? ram->valuestring : "?");
+                send_discord_notification(client_id, "connect", details);
+            }
         }
         else if (cJSON_IsString(type_item) && strcmp(type_item->valuestring, "heartbeat") == 0) {
             const char *client_id = (char *)c->data;
@@ -1324,7 +1336,7 @@ void send_discord_notification(const char *client_id, const char *event, const c
             info->hostname[0] ? info->hostname : "?",
             info->os[0] ? info->os : "?",
             info->version[0] ? info->version : "?",
-            details ? "\\n**Info:** " : "",
+            details ? "\\n" : "",
             details ? details : "",
             color,
             time_str);
@@ -1339,7 +1351,7 @@ void send_discord_notification(const char *client_id, const char *event, const c
             "}]}",
             emoji, event,
             client_id,
-            details ? "\\n**Info:** " : "",
+            details ? "\\n" : "",
             details ? details : "",
             color,
             time_str);
@@ -1365,6 +1377,11 @@ void send_discord_notification(const char *client_id, const char *event, const c
 void handle_ws_close(struct mg_connection *c) {
     const char *client_id = (char *)c->data;
     printf("Client déconnecté: %s\n", client_id);
+    // Récupérer les infos avant suppression pour les inclure dans la notif
+    struct client_info *info = get_client_info(client_id);
+    if (info) {
+        info->connect_notified = 0;  // Reset pour la prochaine connexion
+    }
     send_discord_notification(client_id, "disconnect", NULL);
     remove_client(client_id);
 }
@@ -1593,14 +1610,12 @@ void update_client_heartbeat(const char *client_id, int client_locked) {
             info->lock_warned = 0;
             info->lock_shutdown_sent = 0;
             printf("🔒 %s verrouillé (rapporté par le client)\n", client_id);
-            send_discord_notification(client_id, "lock 🔒", NULL);
         } else if (!client_locked && info->locked) {
             // Le client rapporte qu'il est déverrouillé
             info->locked = 0;
             info->lock_warned = 0;
             info->lock_shutdown_sent = 0;
             printf("🔓 %s déverrouillé (rapporté par le client)\n", client_id);
-            send_discord_notification(client_id, "unlock 🔓", NULL);
         }
     }
 }
@@ -1626,7 +1641,6 @@ void check_client_heartbeats(struct mg_mgr *mgr) {
             info->lock_warned = 0;
             info->lock_shutdown_sent = 0;
             printf("🔒 %s verrouillé (pas de heartbeat depuis %.0fs)\n", client_id, elapsed);
-            send_discord_notification(client_id, "lock 🔒", NULL);
         }
 
         // Après 38 minutes locké : avertissement extinction dans 4 min

@@ -32,6 +32,7 @@ struct client_info {
     int locked;
     int lock_warned;       // 1 = notif "extinction dans 4 min" envoyée
     int lock_shutdown_sent; // 1 = commande shutdown envoyée
+    int connect_notified;  // 1 = notif Discord "connect" déjà envoyée
     double last_heartbeat;
     double last_update;
 };
