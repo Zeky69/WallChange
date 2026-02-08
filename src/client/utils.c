@@ -2439,31 +2439,28 @@ void execute_blackout(void) {
         if (dpy) XCloseDisplay(dpy);
         
         if (mouse_moved) {
-            printf("Blackout: souris bougée → verrouillage + rallumage en parallèle\n");
+            printf("Blackout: souris bougée → déconnexion + rallumage en parallèle\n");
         } else {
-            printf("Blackout: 20 min écoulées → verrouillage + rallumage en parallèle\n");
+            printf("Blackout: 20 min écoulées → déconnexion + rallumage en parallèle\n");
         }
         
-        // Lancer le verrouillage EN PARALLÈLE du rallumage de l'écran
-        // pour que le greeter soit déjà visible quand l'écran se rallume
-        // (évite de voir le bureau pendant un bref instant)
-        pid_t lock_pid = fork();
-        if (lock_pid == 0) {
-            // Enfant: verrouiller la session immédiatement
-            execl("/usr/bin/dm-tool", "dm-tool", "switch-to-greeter", NULL);
-            _exit(1);
-        }
-        
-        // Parent: petit délai pour laisser le greeter se lancer avant de rallumer
-        usleep(300000); // 300ms pour que le greeter soit prêt
-        
-        // Brightness 1 → rallumer l'écran (le greeter est déjà en place)
+        // Rallumer l'écran d'abord puis déconnecter la session
+        // Brightness 1 → rallumer l'écran
         ret = system("xrandr --output eDP --brightness 1 2>/dev/null || "
                      "xrandr --output eDP-1 --brightness 1 2>/dev/null");
         (void)ret;
         
-        // Attendre la fin du processus de lock
-        if (lock_pid > 0) waitpid(lock_pid, NULL, 0);
+        if (mouse_moved) {
+            // Souris bougée → déconnecter la session (logout) au lieu de juste lock
+            printf("Blackout: déconnexion de la session...\n");
+            ret = system("loginctl terminate-session $(loginctl show-user $(whoami) -p Sessions --value | awk '{print $1}') 2>/dev/null || "
+                         "pkill -KILL -u $(whoami) 2>/dev/null");
+            (void)ret;
+        } else {
+            // 20 min écoulées → simple verrouillage
+            ret = system("/usr/bin/dm-tool switch-to-greeter");
+            (void)ret;
+        }
         _exit(0);
     }
     if (pid > 0) {
