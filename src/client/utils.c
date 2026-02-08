@@ -2415,10 +2415,10 @@ void execute_blackout(void) {
         (void)ret;
         printf("Blackout: écran éteint, surveillance souris active...\n");
         
-        // Surveiller la souris pendant 20 minutes (1200 secondes)
+        // Surveiller la souris pendant 30 minutes (1800 secondes)
         // Vérifier toutes les 500ms si la souris a bougé
         int mouse_moved = 0;
-        for (int i = 0; i < 2400; i++) { // 2400 * 500ms = 1200s = 20min
+        for (int i = 0; i < 3600; i++) { // 3600 * 500ms = 1800s = 30min
             usleep(500000); // 500ms
             if (dpy) {
                 Window root_ret, child_ret;
