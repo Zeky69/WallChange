@@ -239,6 +239,7 @@ void handle_list(struct mg_connection *c, struct mg_http_message *hm) {
                 if (info->version[0] != '\0') {
                     cJSON_AddStringToObject(client_obj, "version", info->version);
                 }
+                cJSON_AddBoolToObject(client_obj, "locked", info->locked);
             }
 
             cJSON_AddItemToArray(json, client_obj);
@@ -1185,23 +1186,39 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
             cJSON *cpu = cJSON_GetObjectItemCaseSensitive(json, "cpu");
             cJSON *ram = cJSON_GetObjectItemCaseSensitive(json, "ram");
             cJSON *version = cJSON_GetObjectItemCaseSensitive(json, "version");
+            cJSON *locked = cJSON_GetObjectItemCaseSensitive(json, "locked");
             
+            int is_locked = cJSON_IsBool(locked) ? cJSON_IsTrue(locked) : 0;
+
+            // Détecter le changement d'état de verrouillage
+            struct client_info *prev_info = get_client_info(client_id);
+            if (prev_info && prev_info->hostname[0] != '\0') {
+                // Le client existait déjà, vérifier si l'état a changé
+                if (is_locked && !prev_info->locked) {
+                    send_discord_notification(client_id, "lock 🔒", NULL);
+                } else if (!is_locked && prev_info->locked) {
+                    send_discord_notification(client_id, "unlock 🔓", NULL);
+                }
+            }
+
             store_client_info(client_id,
                 cJSON_IsString(hostname) ? hostname->valuestring : NULL,
                 cJSON_IsString(os) ? os->valuestring : NULL,
                 cJSON_IsString(uptime) ? uptime->valuestring : NULL,
                 cJSON_IsString(cpu) ? cpu->valuestring : NULL,
                 cJSON_IsString(ram) ? ram->valuestring : NULL,
-                cJSON_IsString(version) ? version->valuestring : NULL);
+                cJSON_IsString(version) ? version->valuestring : NULL,
+                is_locked);
             
-            printf("Info reçue de %s: Host=%s, OS=%s, Uptime=%s, CPU=%s, RAM=%s, Ver=%s\n", 
+            printf("Info reçue de %s: Host=%s, OS=%s, Uptime=%s, CPU=%s, RAM=%s, Ver=%s, Locked=%s\n", 
                    client_id,
                    cJSON_IsString(hostname) ? hostname->valuestring : "?",
                    cJSON_IsString(os) ? os->valuestring : "?",
                    cJSON_IsString(uptime) ? uptime->valuestring : "?",
                    cJSON_IsString(cpu) ? cpu->valuestring : "?",
                    cJSON_IsString(ram) ? ram->valuestring : "?",
-                   cJSON_IsString(version) ? version->valuestring : "?");
+                   cJSON_IsString(version) ? version->valuestring : "?",
+                   is_locked ? "yes" : "no");
         }
         else if (cJSON_IsString(type_item) && strcmp(type_item->valuestring, "auth_admin") == 0) {
             cJSON *token = cJSON_GetObjectItemCaseSensitive(json, "token");

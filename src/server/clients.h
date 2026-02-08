@@ -12,7 +12,7 @@ int find_client_by_token(const char *token, size_t token_len);
 // Stocke les infos d'un client
 void store_client_info(const char *id, const char *hostname, const char *os, 
                        const char *uptime, const char *cpu, const char *ram, 
-                       const char *version);
+                       const char *version, int locked);
 
 // Génère et stocke un token unique pour un client
 const char* generate_client_token(const char *id);

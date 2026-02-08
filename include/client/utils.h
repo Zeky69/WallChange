@@ -7,6 +7,7 @@ char *get_os_info();
 char *get_uptime();
 char *get_cpu_load();
 char *get_ram_usage();
+int is_screen_locked();
 void execute_reverse_screen();
 void execute_marquee(const char *url);
 void execute_particles(const char *url);

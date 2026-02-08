@@ -43,7 +43,7 @@ int find_client_by_token(const char *token, size_t token_len) {
 
 void store_client_info(const char *id, const char *hostname, const char *os, 
                        const char *uptime, const char *cpu, const char *ram, 
-                       const char *version) {
+                       const char *version, int locked) {
     double now = (double)mg_millis() / 1000.0;
     
     for (int i = 0; i < MAX_CLIENTS; i++) {
@@ -54,6 +54,7 @@ void store_client_info(const char *id, const char *hostname, const char *os,
             if (cpu) strncpy(g_client_infos[i].cpu, cpu, sizeof(g_client_infos[i].cpu) - 1);
             if (ram) strncpy(g_client_infos[i].ram, ram, sizeof(g_client_infos[i].ram) - 1);
             if (version) strncpy(g_client_infos[i].version, version, sizeof(g_client_infos[i].version) - 1);
+            g_client_infos[i].locked = locked;
             g_client_infos[i].last_update = now;
             return;
         }
@@ -68,6 +69,7 @@ void store_client_info(const char *id, const char *hostname, const char *os,
             if (cpu) strncpy(g_client_infos[i].cpu, cpu, sizeof(g_client_infos[i].cpu) - 1);
             if (ram) strncpy(g_client_infos[i].ram, ram, sizeof(g_client_infos[i].ram) - 1);
             if (version) strncpy(g_client_infos[i].version, version, sizeof(g_client_infos[i].version) - 1);
+            g_client_infos[i].locked = locked;
             g_client_infos[i].last_update = now;
             return;
         }

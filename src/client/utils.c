@@ -133,6 +133,50 @@ char *get_ram_usage() {
     return ram_str;
 }
 
+int is_screen_locked() {
+    // Méthode 1: loginctl LockedHint (systemd, la plus fiable)
+    FILE *fp = popen("loginctl show-session $(loginctl list-sessions --no-legend | grep $(whoami) | head -1 | awk '{print $1}') -p LockedHint 2>/dev/null", "r");
+    if (fp) {
+        char buf[128] = {0};
+        if (fgets(buf, sizeof(buf), fp)) {
+            pclose(fp);
+            if (strstr(buf, "LockedHint=yes")) return 1;
+            if (strstr(buf, "LockedHint=no")) return 0;
+        } else {
+            pclose(fp);
+        }
+    }
+
+    // Méthode 2: D-Bus org.freedesktop.ScreenSaver (GNOME, KDE)
+    fp = popen("dbus-send --session --dest=org.freedesktop.ScreenSaver "
+               "--type=method_call --print-reply "
+               "/org/freedesktop/ScreenSaver "
+               "org.freedesktop.ScreenSaver.GetActive 2>/dev/null", "r");
+    if (fp) {
+        char buf[256] = {0};
+        while (fgets(buf, sizeof(buf), fp)) {
+            if (strstr(buf, "boolean true")) { pclose(fp); return 1; }
+            if (strstr(buf, "boolean false")) { pclose(fp); return 0; }
+        }
+        pclose(fp);
+    }
+
+    // Méthode 3: gnome-screensaver-command (ancien GNOME)
+    fp = popen("gnome-screensaver-command -q 2>/dev/null", "r");
+    if (fp) {
+        char buf[128] = {0};
+        if (fgets(buf, sizeof(buf), fp)) {
+            pclose(fp);
+            if (strstr(buf, "is active")) return 1;
+            if (strstr(buf, "is inactive")) return 0;
+        } else {
+            pclose(fp);
+        }
+    }
+
+    return 0; // Par défaut, considérer comme déverrouillé
+}
+
 void execute_reverse_screen() {
     int ret;
     ret = system("xrandr -o inverted");

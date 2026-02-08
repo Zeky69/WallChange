@@ -29,6 +29,7 @@ struct client_info {
     char cpu[32];
     char ram[32];
     char version[32];
+    int locked;
     double last_update;
 };
 
