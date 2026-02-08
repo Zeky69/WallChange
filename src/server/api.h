@@ -48,7 +48,11 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm);
 // ============== Discord Notifications ==============
 void send_discord_notification(const char *client_id, const char *event, const char *details);
 
-// ============== Handlers WebSocket ==============
+// ============== Heartbeat / Lock Detection ==============
+void update_client_heartbeat(const char *client_id);
+void check_client_heartbeats(struct mg_mgr *mgr);
+
+// ============== Handlers WebSocket ==========================
 void handle_ws_open(struct mg_connection *c);
 void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm);
 void handle_ws_close(struct mg_connection *c);

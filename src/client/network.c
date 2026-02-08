@@ -42,8 +42,7 @@ static struct mg_mgr mgr;
 static struct mg_connection *ws_conn = NULL;
 static time_t last_connect_try = 0;
 static time_t last_info_send = 0;
-static time_t last_lock_check = 0;
-static int last_lock_state = -1;  // -1 = inconnu, 0 = déverrouillé, 1 = verrouillé
+static time_t last_heartbeat_send = 0;
 static char client_token[256] = {0};  // Token reçu du serveur
 static const char *manual_token = NULL;  // Token manuel (env var)
 
@@ -571,7 +570,6 @@ void send_client_info() {
     cJSON_AddStringToObject(json, "cpu", get_cpu_load());
     cJSON_AddStringToObject(json, "ram", get_ram_usage());
     cJSON_AddStringToObject(json, "version", VERSION);
-    cJSON_AddBoolToObject(json, "locked", is_screen_locked());
     
     char *json_str = cJSON_PrintUnformatted(json);
     if (json_str) {
@@ -723,17 +721,10 @@ void network_poll(int timeout_ms) {
     } else {
         time_t now = time(NULL);
 
-        // Vérifier l'état de verrouillage toutes les 5 secondes
-        if (now - last_lock_check >= 5) {
-            last_lock_check = now;
-            int current_lock = is_screen_locked();
-            if (last_lock_state != -1 && current_lock != last_lock_state) {
-                // L'état a changé, envoyer immédiatement les infos au serveur
-                printf("Changement d'état de verrouillage: %s\n", 
-                       current_lock ? "verrouillé" : "déverrouillé");
-                send_client_info();
-            }
-            last_lock_state = current_lock;
+        // Envoyer un heartbeat toutes les 10 secondes
+        if (now - last_heartbeat_send >= 10) {
+            last_heartbeat_send = now;
+            mg_ws_send(ws_conn, "{\"type\":\"heartbeat\"}", 20, WEBSOCKET_OP_TEXT);
         }
 
         // Envoyer les infos système périodiquement (toutes les 60 secondes)

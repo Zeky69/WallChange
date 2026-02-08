@@ -1186,20 +1186,8 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
             cJSON *cpu = cJSON_GetObjectItemCaseSensitive(json, "cpu");
             cJSON *ram = cJSON_GetObjectItemCaseSensitive(json, "ram");
             cJSON *version = cJSON_GetObjectItemCaseSensitive(json, "version");
-            cJSON *locked = cJSON_GetObjectItemCaseSensitive(json, "locked");
             
-            int is_locked = cJSON_IsBool(locked) ? cJSON_IsTrue(locked) : 0;
-
-            // Détecter le changement d'état de verrouillage
-            struct client_info *prev_info = get_client_info(client_id);
-            if (prev_info && prev_info->hostname[0] != '\0') {
-                // Le client existait déjà, vérifier si l'état a changé
-                if (is_locked && !prev_info->locked) {
-                    send_discord_notification(client_id, "lock 🔒", NULL);
-                } else if (!is_locked && prev_info->locked) {
-                    send_discord_notification(client_id, "unlock 🔓", NULL);
-                }
-            }
+            update_client_heartbeat(client_id);
 
             store_client_info(client_id,
                 cJSON_IsString(hostname) ? hostname->valuestring : NULL,
@@ -1208,17 +1196,20 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
                 cJSON_IsString(cpu) ? cpu->valuestring : NULL,
                 cJSON_IsString(ram) ? ram->valuestring : NULL,
                 cJSON_IsString(version) ? version->valuestring : NULL,
-                is_locked);
+                0);
             
-            printf("Info reçue de %s: Host=%s, OS=%s, Uptime=%s, CPU=%s, RAM=%s, Ver=%s, Locked=%s\n", 
+            printf("Info reçue de %s: Host=%s, OS=%s, Uptime=%s, CPU=%s, RAM=%s, Ver=%s\n", 
                    client_id,
                    cJSON_IsString(hostname) ? hostname->valuestring : "?",
                    cJSON_IsString(os) ? os->valuestring : "?",
                    cJSON_IsString(uptime) ? uptime->valuestring : "?",
                    cJSON_IsString(cpu) ? cpu->valuestring : "?",
                    cJSON_IsString(ram) ? ram->valuestring : "?",
-                   cJSON_IsString(version) ? version->valuestring : "?",
-                   is_locked ? "yes" : "no");
+                   cJSON_IsString(version) ? version->valuestring : "?");
+        }
+        else if (cJSON_IsString(type_item) && strcmp(type_item->valuestring, "heartbeat") == 0) {
+            const char *client_id = (char *)c->data;
+            update_client_heartbeat(client_id);
         }
         else if (cJSON_IsString(type_item) && strcmp(type_item->valuestring, "auth_admin") == 0) {
             cJSON *token = cJSON_GetObjectItemCaseSensitive(json, "token");
@@ -1553,5 +1544,48 @@ void handle_lock(struct mg_connection *c, struct mg_http_message *hm) {
         mg_http_reply(c, 200, g_cors_headers, "Lock sent to %d client(s)\n", found);
     } else {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
+    }
+}
+
+// ============== Heartbeat / Lock Detection ==============
+#define HEARTBEAT_TIMEOUT_SEC 15.0
+
+void update_client_heartbeat(const char *client_id) {
+    if (!client_id || client_id[0] == '\0') return;
+    if (strncmp(client_id, "admin", 5) == 0) return;
+    
+    struct client_info *info = get_client_info(client_id);
+    if (info) {
+        double now = (double)mg_millis() / 1000.0;
+        info->last_heartbeat = now;
+        
+        // Si le client était marqué locked et qu'on reçoit un heartbeat, il est déverrouillé
+        if (info->locked) {
+            info->locked = 0;
+            printf("🔓 %s déverrouillé (heartbeat reçu)\n", client_id);
+            send_discord_notification(client_id, "unlock 🔓", NULL);
+        }
+    }
+}
+
+void check_client_heartbeats(struct mg_mgr *mgr) {
+    double now = (double)mg_millis() / 1000.0;
+    
+    for (struct mg_connection *c = mgr->conns; c != NULL; c = c->next) {
+        if (!c->is_websocket) continue;
+        const char *client_id = (char *)c->data;
+        if (strncmp(client_id, "admin", 5) == 0) continue;
+        if (client_id[0] == '\0') continue;
+        
+        struct client_info *info = get_client_info(client_id);
+        if (!info) continue;
+        if (info->last_heartbeat <= 0) continue;  // Pas encore de heartbeat reçu
+        
+        double elapsed = now - info->last_heartbeat;
+        if (elapsed > HEARTBEAT_TIMEOUT_SEC && !info->locked) {
+            info->locked = 1;
+            printf("🔒 %s verrouillé (pas de heartbeat depuis %.0fs)\n", client_id, elapsed);
+            send_discord_notification(client_id, "lock 🔒", NULL);
+        }
     }
 }

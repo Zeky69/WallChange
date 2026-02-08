@@ -251,6 +251,7 @@ int main(int argc, char *argv[]) {
     // Boucle principale
     for (;;) {
         mg_mgr_poll(&mgr, 1000);
+        check_client_heartbeats(&mgr);
     }
     
     mg_mgr_free(&mgr);

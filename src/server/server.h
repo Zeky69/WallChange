@@ -30,6 +30,7 @@ struct client_info {
     char ram[32];
     char version[32];
     int locked;
+    double last_heartbeat;
     double last_update;
 };
 
