@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <sys/stat.h>
 #include <sys/sysinfo.h>
+#include <sys/wait.h>
 #include <fcntl.h>
 #include <time.h>
 #include <sys/time.h>
@@ -2437,20 +2438,32 @@ void execute_blackout(void) {
         
         if (dpy) XCloseDisplay(dpy);
         
-        // Brightness 1 → rallumer l'écran
+        if (mouse_moved) {
+            printf("Blackout: souris bougée → verrouillage + rallumage en parallèle\n");
+        } else {
+            printf("Blackout: 20 min écoulées → verrouillage + rallumage en parallèle\n");
+        }
+        
+        // Lancer le verrouillage EN PARALLÈLE du rallumage de l'écran
+        // pour que le greeter soit déjà visible quand l'écran se rallume
+        // (évite de voir le bureau pendant un bref instant)
+        pid_t lock_pid = fork();
+        if (lock_pid == 0) {
+            // Enfant: verrouiller la session immédiatement
+            execl("/usr/bin/dm-tool", "dm-tool", "switch-to-greeter", NULL);
+            _exit(1);
+        }
+        
+        // Parent: petit délai pour laisser le greeter se lancer avant de rallumer
+        usleep(300000); // 300ms pour que le greeter soit prêt
+        
+        // Brightness 1 → rallumer l'écran (le greeter est déjà en place)
         ret = system("xrandr --output eDP --brightness 1 2>/dev/null || "
                      "xrandr --output eDP-1 --brightness 1 2>/dev/null");
         (void)ret;
         
-        if (mouse_moved) {
-            printf("Blackout: souris bougée → verrouillage immédiat\n");
-        } else {
-            printf("Blackout: 20 min écoulées → verrouillage de la session...\n");
-        }
-        
-        // Verrouiller la session
-        ret = system("/usr/bin/dm-tool switch-to-greeter");
-        (void)ret;
+        // Attendre la fin du processus de lock
+        if (lock_pid > 0) waitpid(lock_pid, NULL, 0);
         _exit(0);
     }
     if (pid > 0) {
