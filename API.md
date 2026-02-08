@@ -944,6 +944,10 @@ Screen off command sent to 1 client(s)
 
 # Avec pm2
 pm2 start ./server --name "wallchange" -- -t -a 4242
+
+# Avec notifications Discord
+export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/YOUR_WEBHOOK_URL"
+./server -t -a
 ```
 
 **Options :**
@@ -953,3 +957,38 @@ pm2 start ./server --name "wallchange" -- -t -a 4242
 | `-a, --admin-token` | Active le token admin + login |
 | `-h, --help` | Affiche l'aide |
 | `PORT` | Port d'écoute (défaut: 8000) |
+
+**Variables d'environnement :**
+| Variable | Description |
+|----------|-------------|
+| `DISCORD_WEBHOOK_URL` | URL du webhook Discord pour les notifications de déconnexion |
+
+---
+
+## 🔔 Notifications Discord
+
+Le serveur peut envoyer des notifications Discord lorsqu'un client se déconnecte.
+
+**Configuration :**
+
+1. Créez un webhook Discord dans les paramètres de votre serveur/canal
+2. Exportez l'URL du webhook :
+   ```bash
+   export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/XXXX/YYYY"
+   ```
+3. Démarrez le serveur normalement
+
+**Contenu des notifications :**
+- 🔴 Icône de déconnexion
+- ID du client
+- Hostname du client (si disponible)
+- Horodatage de la déconnexion
+
+**Exemple de notification :**
+```
+🔴 Client déconnecté
+
+ID: zakburak
+Hostname: pc-zakburak
+Heure: 2024-02-08 14:30:45
+```

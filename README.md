@@ -590,8 +590,29 @@ Si vous envoyez des commandes trop rapidement au même client, vous recevrez une
 | Variable | Description | Usage |
 |----------|-------------|-------|
 | `WALLCHANGE_TOKEN` | Token pour les commandes CLI | Optionnel - utilisé pour forcer un token spécifique (ex: admin) |
+| `DISCORD_WEBHOOK_URL` | URL du webhook Discord pour les notifications de déconnexion | Optionnel - si non défini, utilise l'URL par défaut configurée dans le code |
 
 > Note : Les tokens sont maintenant générés automatiquement par le serveur avec les options `-t` et `-a`.
+
+### 🔔 Notifications Discord
+
+Le serveur peut envoyer des notifications Discord lorsqu'un client se déconnecte. Pour activer cette fonctionnalité :
+
+1. **Créer un webhook Discord :**
+   - Allez dans les paramètres de votre serveur Discord
+   - Sélectionnez un canal et créez un webhook
+   - Copiez l'URL du webhook
+
+2. **Configurer le serveur :**
+   ```bash
+   export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/YOUR_WEBHOOK_URL"
+   ./server
+   ```
+
+Les notifications incluent :
+- L'ID du client déconnecté
+- Le hostname du client (si disponible)
+- L'horodatage de la déconnexion
 
 ---
 
