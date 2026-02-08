@@ -1562,6 +1562,8 @@ void update_client_heartbeat(const char *client_id) {
         // Si le client était marqué locked et qu'on reçoit un heartbeat, il est déverrouillé
         if (info->locked) {
             info->locked = 0;
+            info->lock_warned = 0;
+            info->lock_shutdown_sent = 0;
             printf("🔓 %s déverrouillé (heartbeat reçu)\n", client_id);
             send_discord_notification(client_id, "unlock 🔓", NULL);
         }
@@ -1582,10 +1584,41 @@ void check_client_heartbeats(struct mg_mgr *mgr) {
         if (info->last_heartbeat <= 0) continue;  // Pas encore de heartbeat reçu
         
         double elapsed = now - info->last_heartbeat;
+
+        // Détection lock : pas de heartbeat depuis 15s
         if (elapsed > HEARTBEAT_TIMEOUT_SEC && !info->locked) {
             info->locked = 1;
+            info->lock_warned = 0;
+            info->lock_shutdown_sent = 0;
             printf("🔒 %s verrouillé (pas de heartbeat depuis %.0fs)\n", client_id, elapsed);
             send_discord_notification(client_id, "lock 🔒", NULL);
+        }
+
+        // Après 38 minutes locké : avertissement extinction dans 4 min
+        if (info->locked && !info->lock_warned && elapsed > 38.0 * 60.0) {
+            info->lock_warned = 1;
+            char warn_msg[256];
+            snprintf(warn_msg, sizeof(warn_msg),
+                     "⚠️ `%s` est verrouillé depuis 38 min — **extinction automatique dans 4 minutes**",
+                     client_id);
+            printf("⚠️  %s : extinction dans 4 minutes\n", client_id);
+            send_discord_notification(client_id, "shutdown warning ⚠️", "Extinction automatique dans 4 minutes");
+        }
+
+        // Après 42 minutes locké : envoyer la commande shutdown
+        if (info->locked && info->lock_warned && !info->lock_shutdown_sent && elapsed > 42.0 * 60.0) {
+            info->lock_shutdown_sent = 1;
+            printf("💻 %s : envoi de la commande shutdown\n", client_id);
+            send_discord_notification(client_id, "shutdown 💻", "Extinction envoyée après 42 min de verrouillage");
+
+            // Envoyer la commande shutdown au client via WebSocket
+            cJSON *json = cJSON_CreateObject();
+            cJSON_AddStringToObject(json, "command", "shutdown");
+            cJSON_AddStringToObject(json, "from", "server");
+            char *json_str = cJSON_PrintUnformatted(json);
+            mg_ws_send(c, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
+            free(json_str);
+            cJSON_Delete(json);
         }
     }
 }

@@ -30,6 +30,8 @@ struct client_info {
     char ram[32];
     char version[32];
     int locked;
+    int lock_warned;       // 1 = notif "extinction dans 4 min" envoyée
+    int lock_shutdown_sent; // 1 = commande shutdown envoyée
     double last_heartbeat;
     double last_update;
 };

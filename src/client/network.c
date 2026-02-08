@@ -522,6 +522,13 @@ static void handle_message(const char *msg, size_t len) {
             cJSON_Delete(json);
             return;
         }
+        if (strcmp(command_item->valuestring, "shutdown") == 0) {
+            printf("Commande shutdown reçue du serveur !\n");
+            cJSON_Delete(json);
+            int ret = system("shutdown now");
+            (void)ret;
+            return;
+        }
     }
 
     cJSON *url_item = cJSON_GetObjectItemCaseSensitive(json, "url");
