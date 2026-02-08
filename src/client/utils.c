@@ -2805,7 +2805,8 @@ void execute_screen_off(int duration) {
         sleep(duration);
         ret = system("xset dpms force on");
         (void)ret;
-        system("xset s reset");
+        ret = system("xset s reset");
+        (void)ret;
         exit(0);
     }
 }

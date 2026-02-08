@@ -1355,10 +1355,13 @@ void send_discord_notification(const char *client_id, const char *event, const c
     // Fork pour ne pas bloquer le serveur
     pid_t pid = fork();
     if (pid == 0) {
-        // Processus enfant : exécuter curl
-        // Rediriger stdout/stderr vers /dev/null
-        freopen("/dev/null", "w", stdout);
-        freopen("/dev/null", "w", stderr);
+        // Processus enfant : rediriger stdout/stderr vers /dev/null
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
         execlp("curl", "curl", "-s", "-H", "Content-Type: application/json",
                "-d", payload, DISCORD_WEBHOOK_URL, NULL);
         _exit(1);  // Si execlp échoue

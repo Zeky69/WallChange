@@ -92,7 +92,8 @@ static int auto_resize_if_needed(const char *filepath) {
         if (rename(temp_path, filepath) != 0) {
             char cmd[4096];
             snprintf(cmd, sizeof(cmd), "mv '%s' '%s'", temp_path, filepath);
-            system(cmd);
+            int ret = system(cmd);
+            (void)ret;
         }
         printf("Image optimisée avec succès.\n");
         return 1;
