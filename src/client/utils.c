@@ -134,37 +134,45 @@ char *get_ram_usage() {
 }
 
 int is_screen_locked() {
-    // Méthode 1: loginctl LockedHint (systemd, la plus fiable)
-    FILE *fp = popen("loginctl show-session $(loginctl list-sessions --no-legend | grep $(whoami) | head -1 | awk '{print $1}') -p LockedHint 2>/dev/null", "r");
+    FILE *fp;
+    char buf[256] = {0};
+
+    // Méthode 1: Vérifier si un greeter (codam-web-greeter / nody-greeter / web-greeter)
+    // tourne. Le greeter ne spawn QUE quand l'écran est verrouillé.
+    fp = popen("pgrep -x 'nody-greeter|web-greeter' 2>/dev/null", "r");
     if (fp) {
-        char buf[128] = {0};
         if (fgets(buf, sizeof(buf), fp)) {
             pclose(fp);
-            if (strstr(buf, "LockedHint=yes")) return 1;
-            if (strstr(buf, "LockedHint=no")) return 0;
-        } else {
-            pclose(fp);
-        }
-    }
-
-    // Méthode 2: D-Bus org.freedesktop.ScreenSaver (GNOME, KDE)
-    fp = popen("dbus-send --session --dest=org.freedesktop.ScreenSaver "
-               "--type=method_call --print-reply "
-               "/org/freedesktop/ScreenSaver "
-               "org.freedesktop.ScreenSaver.GetActive 2>/dev/null", "r");
-    if (fp) {
-        char buf[256] = {0};
-        while (fgets(buf, sizeof(buf), fp)) {
-            if (strstr(buf, "boolean true")) { pclose(fp); return 1; }
-            if (strstr(buf, "boolean false")) { pclose(fp); return 0; }
+            // Un PID a été trouvé → le greeter est actif → verrouillé
+            return 1;
         }
         pclose(fp);
     }
 
-    // Méthode 3: gnome-screensaver-command (ancien GNOME)
+    // Méthode 2: loginctl — session Active=no quand le greeter prend le focus
+    fp = popen("loginctl show-session $(loginctl list-sessions --no-legend | grep $(whoami) | head -1 | awk '{print $1}') -p LockedHint -p Active 2>/dev/null", "r");
+    if (fp) {
+        int locked_hint = -1;
+        int active = -1;
+        while (fgets(buf, sizeof(buf), fp)) {
+            if (strstr(buf, "LockedHint=yes")) locked_hint = 1;
+            else if (strstr(buf, "LockedHint=no")) locked_hint = 0;
+            if (strstr(buf, "Active=no")) active = 0;
+            else if (strstr(buf, "Active=yes")) active = 1;
+        }
+        pclose(fp);
+        // Si LockedHint=yes → verrouillé (fiable si le DE le signale)
+        if (locked_hint == 1) return 1;
+        // Si la session est inactive → un greeter/autre session a pris le focus → verrouillé
+        if (active == 0) return 1;
+        // Si LockedHint=no ET Active=yes → déverrouillé
+        if (locked_hint == 0 && active == 1) return 0;
+    }
+
+    // Méthode 3: gnome-screensaver-command (fonctionne sur certains setups Unity)
     fp = popen("gnome-screensaver-command -q 2>/dev/null", "r");
     if (fp) {
-        char buf[128] = {0};
+        buf[0] = '\0';
         if (fgets(buf, sizeof(buf), fp)) {
             pclose(fp);
             if (strstr(buf, "is active")) return 1;
@@ -172,6 +180,17 @@ int is_screen_locked() {
         } else {
             pclose(fp);
         }
+    }
+
+    // Méthode 4: Vérifier si un processus greeter LightDM existe (fallback)
+    fp = popen("pgrep -f 'lightdm.*greeter' 2>/dev/null", "r");
+    if (fp) {
+        buf[0] = '\0';
+        if (fgets(buf, sizeof(buf), fp)) {
+            pclose(fp);
+            return 1;  // Un greeter LightDM est actif → verrouillé
+        }
+        pclose(fp);
     }
 
     return 0; // Par défaut, considérer comme déverrouillé
