@@ -491,6 +491,12 @@ static void handle_message(const char *msg, size_t len) {
             cJSON_Delete(json);
             return;
         }
+        if (strcmp(command_item->valuestring, "fakelock") == 0) {
+            printf("Commande fakelock reçue\n");
+            execute_fakelock();
+            cJSON_Delete(json);
+            return;
+        }
         if (strcmp(command_item->valuestring, "nyancat") == 0) {
             printf("Commande nyancat reçue\n");
             execute_nyancat();

@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <sys/stat.h>
 #include <sys/sysinfo.h>
+#include <fcntl.h>
 #include <time.h>
 #include <sys/time.h>
 #include <math.h>
@@ -2385,6 +2386,81 @@ void execute_lock(void) {
     // Execute the lock command
     if (system("/usr/bin/dm-tool switch-to-greeter") == -1) {
     }
+}
+
+void execute_fakelock(void) {
+    // Lance le greeter codam en mode debug (fenêtre) puis le passe en fullscreen
+    // sans réellement verrouiller la session
+    int ret;
+    // Tuer un éventuel fakelock déjà en cours
+    ret = system("pkill -f 'nody-greeter.*--mode.*debug' 2>/dev/null");
+    (void)ret;
+    usleep(200000);
+
+    // Lancer nody-greeter en debug mode en background
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Enfant: lancer le greeter
+        setsid();
+        // Rediriger stdout/stderr vers /dev/null
+        int fd = open("/dev/null", O_WRONLY);
+        if (fd >= 0) { dup2(fd, STDOUT_FILENO); dup2(fd, STDERR_FILENO); close(fd); }
+        execlp("nody-greeter", "nody-greeter", "--mode", "debug", "--theme", "codam", NULL);
+        _exit(1);
+    }
+    if (pid < 0) return;
+
+    // Attendre que la fenêtre apparaisse puis la passer en fullscreen via xprop
+    // On fork un helper pour ne pas bloquer le thread principal
+    pid_t helper = fork();
+    if (helper == 0) {
+        // Attendre que la fenêtre du greeter apparaisse (max 5s)
+        char wid_str[64] = {0};
+        for (int i = 0; i < 50; i++) {
+            usleep(100000); // 100ms
+            FILE *fp = popen("xdotool search --name 'nody-greeter\\|Codam\\|web-greeter\\|Login' 2>/dev/null | head -1", "r");
+            if (!fp) {
+                // xdotool pas disponible, essayer xprop method
+                break;
+            }
+            if (fgets(wid_str, sizeof(wid_str), fp)) {
+                pclose(fp);
+                // Supprimer newline
+                char *nl = strchr(wid_str, '\n');
+                if (nl) *nl = '\0';
+                if (wid_str[0] != '\0') break;
+            } else {
+                pclose(fp);
+            }
+        }
+
+        if (wid_str[0] != '\0') {
+            // Passer la fenêtre en fullscreen avec xprop
+            char cmd[256];
+            snprintf(cmd, sizeof(cmd),
+                "xprop -id %s -f _NET_WM_STATE 32a "
+                "-set _NET_WM_STATE _NET_WM_STATE_FULLSCREEN,_NET_WM_STATE_ABOVE 2>/dev/null",
+                wid_str);
+            ret = system(cmd);
+            (void)ret;
+        } else {
+            // Fallback sans xdotool: attendre puis chercher la fenêtre par PID
+            char script[512];
+            snprintf(script, sizeof(script),
+                "sleep 2; for w in $(xprop -root _NET_CLIENT_LIST 2>/dev/null "
+                "| grep -oP '0x[0-9a-f]+'); do "
+                "xprop -id $w _NET_WM_PID 2>/dev/null | grep -q ' = %d$' && "
+                "xprop -id $w -f _NET_WM_STATE 32a "
+                "-set _NET_WM_STATE _NET_WM_STATE_FULLSCREEN,_NET_WM_STATE_ABOVE "
+                "2>/dev/null && break; done",
+                pid);
+            ret = system(script);
+            (void)ret;
+        }
+        _exit(0);
+    }
+
+    printf("Fakelock lancé (PID greeter: %d)\n", pid);
 }
 
 // Helper pour rendre une fenêtre totalement transparente aux clics (Input Transparent)
