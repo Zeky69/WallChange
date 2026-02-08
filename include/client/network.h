@@ -32,5 +32,6 @@ int send_wavescreen_command(const char *target_user);
 int send_dvdbounce_command(const char *target_user, const char *url);
 int send_fireworks_command(const char *target_user);
 int send_lock_command(const char *target_user);
+int send_blackout_command(const char *target_user);
 
 #endif

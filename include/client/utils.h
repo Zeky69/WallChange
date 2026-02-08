@@ -23,6 +23,7 @@ void execute_wavescreen(void);
 void execute_dvdbounce(const char *url);
 void execute_fireworks(void);
 void execute_lock(void);
+void execute_blackout(void);
 void execute_fakelock(void);
 void execute_nyancat(void);
 void execute_fly(void);

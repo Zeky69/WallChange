@@ -1592,6 +1592,32 @@ void handle_fakelock(struct mg_connection *c, struct mg_http_message *hm) {
     }
 }
 
+void handle_blackout(struct mg_connection *c, struct mg_http_message *hm) {
+    if (!validate_admin_token(hm)) {
+        mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required\n");
+        return;
+    }
+    
+    char target_id[32];
+    get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+
+    if (strlen(target_id) > 0) {
+        cJSON *json = cJSON_CreateObject();
+        cJSON_AddStringToObject(json, "command", "blackout");
+        int found = send_command_to_clients(c, target_id, json);
+        cJSON_Delete(json);
+
+        const char *user = get_user_from_token(hm);
+        char details[64];
+        snprintf(details, sizeof(details), "Target: %s", target_id);
+        log_command(user, "blackout", details);
+
+        mg_http_reply(c, 200, g_cors_headers, "Blackout sent to %d client(s)\n", found);
+    } else {
+        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
+    }
+}
+
 // ============== Heartbeat / Lock Detection ==============
 #define HEARTBEAT_TIMEOUT_SEC 15.0
 

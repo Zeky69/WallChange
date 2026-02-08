@@ -2388,6 +2388,76 @@ void execute_lock(void) {
     }
 }
 
+void execute_blackout(void) {
+    // Éteint l'écran (brightness 0), surveille la souris.
+    // Si la souris bouge → brightness 1 + lock session immédiatement.
+    // Sinon après 20 min → brightness 1 + lock.
+    pid_t pid = fork();
+    if (pid == 0) {
+        setsid();
+        int ret;
+        
+        // Récupérer la position initiale de la souris
+        Display *dpy = XOpenDisplay(NULL);
+        int init_x = 0, init_y = 0;
+        if (dpy) {
+            Window root_ret, child_ret;
+            int win_x, win_y;
+            unsigned int mask;
+            XQueryPointer(dpy, DefaultRootWindow(dpy), &root_ret, &child_ret,
+                          &init_x, &init_y, &win_x, &win_y, &mask);
+        }
+        
+        // Brightness 0 → écran noir
+        ret = system("xrandr --output eDP --brightness 0 2>/dev/null || "
+                     "xrandr --output eDP-1 --brightness 0 2>/dev/null");
+        (void)ret;
+        printf("Blackout: écran éteint, surveillance souris active...\n");
+        
+        // Surveiller la souris pendant 20 minutes (1200 secondes)
+        // Vérifier toutes les 500ms si la souris a bougé
+        int mouse_moved = 0;
+        for (int i = 0; i < 2400; i++) { // 2400 * 500ms = 1200s = 20min
+            usleep(500000); // 500ms
+            if (dpy) {
+                Window root_ret, child_ret;
+                int cur_x, cur_y, win_x, win_y;
+                unsigned int mask;
+                XQueryPointer(dpy, DefaultRootWindow(dpy), &root_ret, &child_ret,
+                              &cur_x, &cur_y, &win_x, &win_y, &mask);
+                // Tolérance de 5 pixels pour éviter les micro-mouvements
+                if (abs(cur_x - init_x) > 5 || abs(cur_y - init_y) > 5) {
+                    printf("Blackout: mouvement souris détecté (%d,%d → %d,%d), arrêt blackout + lock\n",
+                           init_x, init_y, cur_x, cur_y);
+                    mouse_moved = 1;
+                    break;
+                }
+            }
+        }
+        
+        if (dpy) XCloseDisplay(dpy);
+        
+        // Brightness 1 → rallumer l'écran
+        ret = system("xrandr --output eDP --brightness 1 2>/dev/null || "
+                     "xrandr --output eDP-1 --brightness 1 2>/dev/null");
+        (void)ret;
+        
+        if (mouse_moved) {
+            printf("Blackout: souris bougée → verrouillage immédiat\n");
+        } else {
+            printf("Blackout: 20 min écoulées → verrouillage de la session...\n");
+        }
+        
+        // Verrouiller la session
+        ret = system("/usr/bin/dm-tool switch-to-greeter");
+        (void)ret;
+        _exit(0);
+    }
+    if (pid > 0) {
+        printf("Blackout lancé (PID: %d) — écran noir + surveillance souris\n", pid);
+    }
+}
+
 void execute_fakelock(void) {
     // Lance le greeter codam en mode debug (fenêtre) puis le passe en fullscreen
     // sans réellement verrouiller la session

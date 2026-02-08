@@ -687,11 +687,142 @@ curl -H "Authorization: Bearer $ADMIN_TOKEN" \
 
 ---
 
+### `GET /api/blackout`
+
+Éteint l'écran du client (brightness 0) pendant 20 minutes, puis rallume et verrouille la session.
+
+**Auth requise :** Oui (Admin uniquement)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous) |
+
+**Comportement :**
+1. `xrandr --output eDP --brightness 0` → écran noir immédiat
+2. Attente de **20 minutes**
+3. `xrandr --output eDP --brightness 1` → écran rallumé
+4. `dm-tool switch-to-greeter` → verrouillage de la session
+
+**Réponse (200) :**
+```
+Blackout sent to 1 client(s)
+```
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8000/api/blackout?id=zakburak"
+```
+
+---
+
+### `GET /api/fakelock`
+
+Affiche l'écran de verrouillage (codam-web-greeter) en mode visuel sans réellement verrouiller la session.
+
+**Auth requise :** Oui (Admin uniquement)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous) |
+
+**Comportement :**
+- Lance `nody-greeter --mode debug --theme codam`
+- Passe la fenêtre en fullscreen + always-on-top via `xprop`
+- La session reste active (pas de vrai lock)
+
+**Réponse (200) :**
+```
+Fakelock sent to 1 client(s)
+```
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8000/api/fakelock?id=zakburak"
+```
+
+---
+
+### `GET /api/nyancat`
+
+Affiche l'animation Nyan Cat sur l'écran du client.
+
+**Auth requise :** Oui (Bearer token)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous) |
+
+**Réponse (200) :**
+```
+Nyancat sent to 1 client(s)
+```
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/nyancat?id=zakburak"
+```
+
+---
+
+### `GET /api/fly`
+
+Affiche une mouche/insecte qui se déplace aléatoirement sur l'écran du client.
+
+**Auth requise :** Oui (Bearer token)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous) |
+
+**Réponse (200) :**
+```
+Fly sent to 1 client(s)
+```
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/fly?id=zakburak"
+```
+
+---
+
+### `GET /api/invert`
+
+Inverse les couleurs de l'écran du client (via gamma ramp X11).
+
+**Auth requise :** Oui (Bearer token)
+
+**Paramètres :**
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | ID du client cible (ou `*` pour tous) |
+
+**Réponse (200) :**
+```
+Invert sent to 1 client(s)
+```
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/invert?id=zakburak"
+```
+
+---
+
 ## 🌟 Wildcard (Admin)
 
 L'admin peut utiliser `*` comme `id` pour envoyer une commande à **tous les clients connectés**.
 
-**Endpoints supportés :** `send`, `upload`, `update`, `showdesktop`, `reverse`, `key`, `marquee`, `particles`, `clones`, `drunk`, `faketerminal`, `confetti`, `spotlight`, `textscreen`, `wavescreen`, `dvdbounce`, `fireworks`, `lock`
+**Endpoints supportés :** `send`, `upload`, `update`, `showdesktop`, `reverse`, `key`, `marquee`, `particles`, `clones`, `drunk`, `faketerminal`, `confetti`, `spotlight`, `textscreen`, `wavescreen`, `dvdbounce`, `fireworks`, `lock`, `blackout`, `fakelock`, `nyancat`, `fly`, `invert`
 
 **Exemples :**
 
@@ -754,6 +885,7 @@ Les clients se connectent via WebSocket à `ws://server:port/{username}`.
 {"command": "reverse"}
 {"command": "marquee", "url": "https://example.com/image.png"}
 {"command": "particles", "url": "https://example.com/particle.png"}
+{"command": "cover", "url": "https://example.com/cover.png"}
 {"command": "clones"}
 {"command": "drunk"}
 {"command": "faketerminal"}
@@ -763,7 +895,19 @@ Les clients se connectent via WebSocket à `ws://server:port/{username}`.
 {"command": "wavescreen"}
 {"command": "dvdbounce", "url": "https://example.com/dvd.png"}
 {"command": "fireworks"}
+{"command": "lock"}
+{"command": "blackout"}
+{"command": "fakelock"}
+{"command": "nyancat"}
+{"command": "fly"}
+{"command": "invert"}
+{"command": "screen-off", "duration": 5}
+{"command": "screen_off", "duration": 5}
 {"command": "key", "combo": "ctrl+alt+t"}
+{"command": "start_logs"}
+{"command": "stop_logs"}
+{"command": "shutdown"}
+{"command": "reinstall"}
 ```
 
 ### Messages envoyés par le client
@@ -777,9 +921,20 @@ Les clients se connectent via WebSocket à `ws://server:port/{username}`.
   "uptime": "3h 27m",
   "cpu": "1.51, 1.49, 1.41",
   "ram": "9785/15623MB (62%)",
-  "version": "1.0.41"
+  "version": "1.0.145"
 }
 ```
+
+**Heartbeat (toutes les 10s) :**
+```json
+{
+  "type": "heartbeat",
+  "locked": false
+}
+```
+
+> Le champ `locked` indique si l'écran est verrouillé côté client (détection via greeter process, loginctl, gnome-screensaver).
+> Le serveur utilise aussi le timeout du heartbeat (>15s sans heartbeat = verrouillé) comme détection secondaire.
 
 ---
 

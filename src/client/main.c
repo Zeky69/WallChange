@@ -32,7 +32,8 @@ static void print_help(const char *prog_name) {
     printf("    \033[1;32mmarquee\033[0m <user> <url>           Faire défiler une image\n");
     printf("    \033[1;32mparticles\033[0m <user> <url>         Particules autour de la souris (5s)\n");
     printf("    \033[1;32mclones\033[0m <user>                  100 clones de souris (5s)\n");
-    printf("    \033[1;32mdrunk\033[0m <user>                   Rend la souris ivre (10s)\n\n");
+    printf("    \033[1;32mdrunk\033[0m <user>                   Rend la souris ivre (10s)\n");
+    printf("    \033[1;32mblackout\033[0m <user>                Écran noir 20min puis lock\n\n");
     printf("  \033[1;36mOPTIONS:\033[0m\n");
     printf("    \033[1;33m-l, --local\033[0m                    Mode local (localhost:8000)\n");
     printf("    \033[1;33m-h, --help\033[0m                     Afficher cette aide\n");
@@ -230,6 +231,10 @@ int main(int argc, char **argv) {
     // Mode commande : lock
     if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "lock") == 0) {
         return send_lock_command(argv[cmd_idx + 1]);
+    }
+    // Mode commande : blackout (écran noir 20min + lock)
+    if (cmd_idx > 0 && cmd_idx + 1 <= argc - 1 && strcmp(argv[cmd_idx], "blackout") == 0) {
+        return send_blackout_command(argv[cmd_idx + 1]);
     }
     // Mode commande : lister les clients
     if (cmd_idx > 0 && strcmp(argv[cmd_idx], "list") == 0) {
