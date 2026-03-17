@@ -6,3 +6,4 @@ uploads/
 server.log
 .wallchange_token
 .admin_credentials
+ecosystem.config.js

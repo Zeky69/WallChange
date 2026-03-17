@@ -19,24 +19,6 @@ static inline void run_cmd(const char *cmd) {
     UNUSED(ret);
 }
 
-static int read_command_output(const char *cmd, char *output, size_t output_size) {
-    if (!cmd || !output || output_size == 0) return 0;
-    FILE *fp = popen(cmd, "r");
-    if (!fp) return 0;
-
-    if (!fgets(output, (int) output_size, fp)) {
-        pclose(fp);
-        return 0;
-    }
-    pclose(fp);
-
-    size_t len = strlen(output);
-    while (len > 0 && (output[len - 1] == '\n' || output[len - 1] == '\r')) {
-        output[--len] = '\0';
-    }
-    return len > 0;
-}
-
 void perform_update() {
     printf("Mise à jour demandée...\n");
     
@@ -97,27 +79,6 @@ void perform_update() {
             fprintf(stderr, "Erreur: Impossible de cloner le dépôt.\n");
             return;
         }
-    }
-
-    const char *pinned_commit = getenv("WALLCHANGE_UPDATE_PINNED_COMMIT");
-    if (!pinned_commit || pinned_commit[0] == '\0') {
-        fprintf(stderr, "Mise à jour refusée: WALLCHANGE_UPDATE_PINNED_COMMIT absent.\n");
-        fprintf(stderr, "Définissez un commit SHA de confiance pour autoriser l'update.\n");
-        return;
-    }
-
-    char fetched_commit[128] = {0};
-    char rev_cmd[CMD_MAX];
-    snprintf(rev_cmd, sizeof(rev_cmd), "cd '%s' && git rev-parse --verify HEAD", temp_dir);
-    if (!read_command_output(rev_cmd, fetched_commit, sizeof(fetched_commit))) {
-        fprintf(stderr, "Mise à jour refusée: impossible de lire le commit HEAD.\n");
-        return;
-    }
-
-    if (strcmp(fetched_commit, pinned_commit) != 0) {
-        fprintf(stderr, "Mise à jour refusée: commit non approuvé.\n");
-        fprintf(stderr, "HEAD=%s, attendu=%s\n", fetched_commit, pinned_commit);
-        return;
     }
 
     // 3. Sauvegarder le chemin de l'exécutable actuel
