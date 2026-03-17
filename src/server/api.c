@@ -29,6 +29,16 @@ struct login_rl_entry {
 
 static struct login_rl_entry g_login_rl[256];
 
+struct ws_session_tracker {
+    int active;
+    char client_id[32];
+    char hostname[256];
+    time_t connected_at;
+    time_t last_accounted_at;
+};
+
+static struct ws_session_tracker g_ws_sessions[MAX_CLIENTS];
+
 static void sanitize_log_field(const char *src, char *dst, size_t dst_size) {
     size_t j = 0;
     if (!dst || dst_size == 0) return;
@@ -435,6 +445,7 @@ static cJSON *create_default_feature_stats_db(void) {
     cJSON_AddItemToObject(root, "targets", cJSON_CreateObject());
     cJSON_AddItemToObject(root, "user_target_pairs", cJSON_CreateObject());
     cJSON_AddItemToObject(root, "dispatch", cJSON_CreateObject());
+    cJSON_AddItemToObject(root, "connections", cJSON_CreateObject());
     cJSON_AddItemToObject(root, "recent_events", cJSON_CreateArray());
     return root;
 }
@@ -474,6 +485,7 @@ static cJSON *load_feature_stats_db(void) {
     get_or_create_object_item(root, "targets");
     get_or_create_object_item(root, "user_target_pairs");
     get_or_create_object_item(root, "dispatch");
+    get_or_create_object_item(root, "connections");
     get_or_create_array_item(root, "recent_events");
 
     return root;
@@ -504,6 +516,124 @@ static void increment_counter(cJSON *obj, const char *key, int delta) {
     if (!obj || !key) return;
     int current = get_json_int(obj, key);
     set_json_number(obj, key, (double)(current + delta));
+}
+
+static int find_ws_session_slot(const char *client_id, int create_if_missing) {
+    if (!client_id || client_id[0] == '\0') return -1;
+
+    int empty_slot = -1;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (g_ws_sessions[i].active && strcmp(g_ws_sessions[i].client_id, client_id) == 0) {
+            return i;
+        }
+        if (!g_ws_sessions[i].active && empty_slot < 0) {
+            empty_slot = i;
+        }
+    }
+
+    if (!create_if_missing || empty_slot < 0) return -1;
+
+    memset(&g_ws_sessions[empty_slot], 0, sizeof(g_ws_sessions[empty_slot]));
+    g_ws_sessions[empty_slot].active = 1;
+    snprintf(g_ws_sessions[empty_slot].client_id, sizeof(g_ws_sessions[empty_slot].client_id), "%s", client_id);
+    g_ws_sessions[empty_slot].connected_at = time(NULL);
+    g_ws_sessions[empty_slot].last_accounted_at = g_ws_sessions[empty_slot].connected_at;
+    return empty_slot;
+}
+
+static int record_connection_duration_stat(const char *client_id, const char *hostname, int duration_seconds) {
+    if (!client_id || client_id[0] == '\0' || !hostname || hostname[0] == '\0' || duration_seconds <= 0) return 0;
+
+    char safe_user[128] = {0};
+    char safe_hostname[256] = {0};
+    char user_key[128] = {0};
+    char hostname_key[128] = {0};
+    char user_host_key[260] = {0};
+
+    sanitize_log_field(client_id, safe_user, sizeof(safe_user));
+    sanitize_log_field(hostname, safe_hostname, sizeof(safe_hostname));
+    sanitize_stat_key(safe_user, user_key, sizeof(user_key));
+    sanitize_stat_key(safe_hostname, hostname_key, sizeof(hostname_key));
+    snprintf(user_host_key, sizeof(user_host_key), "%s__to__%s", user_key, hostname_key);
+
+    cJSON *db = load_feature_stats_db();
+    if (!db) return 0;
+
+    cJSON *connections = get_or_create_object_item(db, "connections");
+    cJSON *hostname_seconds = connections ? get_or_create_object_item(connections, "hostname_seconds") : NULL;
+    cJSON *hostname_sessions = connections ? get_or_create_object_item(connections, "hostname_sessions") : NULL;
+    cJSON *users = connections ? get_or_create_object_item(connections, "users") : NULL;
+    cJSON *user_hostname_seconds = connections ? get_or_create_object_item(connections, "user_hostname_seconds") : NULL;
+
+    if (!connections || !hostname_seconds || !hostname_sessions || !users || !user_hostname_seconds) {
+        cJSON_Delete(db);
+        return 0;
+    }
+
+    increment_counter(connections, "total_connection_seconds", duration_seconds);
+    increment_counter(connections, "total_connection_sessions", 1);
+
+    increment_counter(hostname_seconds, hostname_key, duration_seconds);
+    increment_counter(hostname_sessions, hostname_key, 1);
+    increment_counter(user_hostname_seconds, user_host_key, duration_seconds);
+
+    cJSON *user_obj = get_or_create_object_item(users, user_key);
+    if (user_obj) {
+        if (!cJSON_IsString(cJSON_GetObjectItemCaseSensitive(user_obj, "display_name"))) {
+            cJSON_AddStringToObject(user_obj, "display_name", safe_user);
+        }
+        cJSON *hostnames_obj = get_or_create_object_item(user_obj, "hostnames");
+        increment_counter(user_obj, "total_connection_seconds", duration_seconds);
+        increment_counter(user_obj, "session_count", 1);
+        if (hostnames_obj) increment_counter(hostnames_obj, hostname_key, duration_seconds);
+    }
+
+    int ok = save_feature_stats_db(db);
+    cJSON_Delete(db);
+    return ok;
+}
+
+static void ws_session_update_hostname(const char *client_id, const char *hostname) {
+    if (!client_id || client_id[0] == '\0') return;
+    if (!hostname || hostname[0] == '\0') return;
+
+    int slot = find_ws_session_slot(client_id, 1);
+    if (slot < 0) return;
+
+    sanitize_log_field(hostname, g_ws_sessions[slot].hostname, sizeof(g_ws_sessions[slot].hostname));
+}
+
+static void ws_session_account_elapsed(const char *client_id, int finalize_session) {
+    if (!client_id || client_id[0] == '\0') return;
+
+    int slot = find_ws_session_slot(client_id, 0);
+    if (slot < 0) return;
+
+    time_t now = time(NULL);
+    if (g_ws_sessions[slot].last_accounted_at <= 0) {
+        g_ws_sessions[slot].last_accounted_at = now;
+    }
+
+    int elapsed = (int)(now - g_ws_sessions[slot].last_accounted_at);
+    if (elapsed > 0) {
+        const char *hostname = g_ws_sessions[slot].hostname;
+        if (hostname[0] == '\0') {
+            struct client_info *info = get_client_info(client_id);
+            if (info && info->hostname[0] != '\0') {
+                sanitize_log_field(info->hostname, g_ws_sessions[slot].hostname, sizeof(g_ws_sessions[slot].hostname));
+                hostname = g_ws_sessions[slot].hostname;
+            }
+        }
+
+        if (hostname[0] != '\0') {
+            record_connection_duration_stat(client_id, hostname, elapsed);
+        }
+        g_ws_sessions[slot].last_accounted_at = now;
+    }
+
+    if (finalize_session) {
+        memset(&g_ws_sessions[slot], 0, sizeof(g_ws_sessions[slot]));
+    }
 }
 
 static int get_object_entries_count(cJSON *obj) {
@@ -2100,10 +2230,16 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
         cJSON *targets_obj = cJSON_GetObjectItemCaseSensitive(feature_db, "targets");
         cJSON *pairs_obj = cJSON_GetObjectItemCaseSensitive(feature_db, "user_target_pairs");
         cJSON *dispatch_obj = cJSON_GetObjectItemCaseSensitive(feature_db, "dispatch");
+        cJSON *connections_obj = cJSON_GetObjectItemCaseSensitive(feature_db, "connections");
 
         if (!cJSON_IsObject(targets_obj)) targets_obj = get_or_create_object_item(feature_db, "targets");
         if (!cJSON_IsObject(pairs_obj)) pairs_obj = get_or_create_object_item(feature_db, "user_target_pairs");
         if (!cJSON_IsObject(dispatch_obj)) dispatch_obj = get_or_create_object_item(feature_db, "dispatch");
+        if (!cJSON_IsObject(connections_obj)) connections_obj = get_or_create_object_item(feature_db, "connections");
+
+        cJSON *conn_hostname_seconds = cJSON_IsObject(connections_obj) ? get_or_create_object_item(connections_obj, "hostname_seconds") : NULL;
+        cJSON *conn_hostname_sessions = cJSON_IsObject(connections_obj) ? get_or_create_object_item(connections_obj, "hostname_sessions") : NULL;
+        cJSON *conn_users = cJSON_IsObject(connections_obj) ? get_or_create_object_item(connections_obj, "users") : NULL;
 
         int command_kinds = get_object_entries_count(commands_obj);
         int unique_users = get_object_entries_count(users_obj);
@@ -2113,6 +2249,8 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
         int top_pc_limit = pc_kinds < 15 ? pc_kinds : 15;
         int pair_kinds = get_object_entries_count(pairs_obj);
         int top_pairs_limit = pair_kinds < 20 ? pair_kinds : 20;
+        int conn_hostname_kinds = get_object_entries_count(conn_hostname_seconds);
+        int conn_user_kinds = get_object_entries_count(conn_users);
 
         cJSON *feature_stats = cJSON_CreateObject();
         cJSON *feature_summary = cJSON_CreateObject();
@@ -2123,13 +2261,19 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
         cJSON *top_user_pc_pairs = cJSON_CreateArray();
         cJSON *top_user_favorite_pcs = cJSON_CreateArray();
         cJSON *top_hostnames = cJSON_CreateArray();
+        cJSON *top_connected_hostnames = cJSON_CreateArray();
+        cJSON *top_connected_users = cJSON_CreateArray();
 
-        if (feature_stats && feature_summary && leaderboards && top_users && top_features && top_pcs && top_user_pc_pairs && top_user_favorite_pcs && top_hostnames) {
+        if (feature_stats && feature_summary && leaderboards && top_users && top_features && top_pcs && top_user_pc_pairs && top_user_favorite_pcs && top_hostnames && top_connected_hostnames && top_connected_users) {
             cJSON_AddNumberToObject(feature_summary, "total_commands", get_json_int(feature_db, "total_commands"));
             cJSON_AddNumberToObject(feature_summary, "unique_users", unique_users);
             cJSON_AddNumberToObject(feature_summary, "feature_kinds", command_kinds);
             cJSON_AddNumberToObject(feature_summary, "pc_kinds", pc_kinds);
             cJSON_AddNumberToObject(feature_summary, "recent_events_count", cJSON_IsArray(recent_events) ? cJSON_GetArraySize(recent_events) : 0);
+            cJSON_AddNumberToObject(feature_summary, "total_connection_seconds", get_json_int(connections_obj, "total_connection_seconds"));
+            cJSON_AddNumberToObject(feature_summary, "total_connection_sessions", get_json_int(connections_obj, "total_connection_sessions"));
+            cJSON_AddNumberToObject(feature_summary, "connection_unique_hostnames", conn_hostname_kinds);
+            cJSON_AddNumberToObject(feature_summary, "connection_unique_users", conn_user_kinds);
             if (cJSON_IsObject(dispatch_obj)) {
                 cJSON_AddNumberToObject(feature_summary, "total_requests_sent", get_json_int(dispatch_obj, "total_requests_sent"));
                 cJSON_AddNumberToObject(feature_summary, "total_requests_delivered", get_json_int(dispatch_obj, "total_requests_delivered"));
@@ -2185,6 +2329,70 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
                     }
 
                     free(ranked_users);
+                }
+            }
+
+            if (cJSON_IsObject(conn_hostname_seconds) && conn_hostname_kinds > 0) {
+                struct ranked_counter_entry *ranked_conn_hosts =
+                    (struct ranked_counter_entry *)calloc((size_t)conn_hostname_kinds, sizeof(struct ranked_counter_entry));
+
+                if (ranked_conn_hosts) {
+                    int idx = 0;
+                    cJSON *it = NULL;
+                    cJSON_ArrayForEach(it, conn_hostname_seconds) {
+                        ranked_conn_hosts[idx].item = it;
+                        ranked_conn_hosts[idx].count = cJSON_IsNumber(it) ? it->valueint : 0;
+                        snprintf(ranked_conn_hosts[idx].name, sizeof(ranked_conn_hosts[idx].name), "%s", it->string ? it->string : "unknown");
+                        idx++;
+                    }
+
+                    qsort(ranked_conn_hosts, (size_t)conn_hostname_kinds, sizeof(struct ranked_counter_entry), compare_ranked_counters_desc);
+                    int lim = conn_hostname_kinds < 15 ? conn_hostname_kinds : 15;
+                    for (int i = 0; i < lim; i++) {
+                        cJSON *entry = cJSON_CreateObject();
+                        if (!entry) continue;
+                        int sessions = get_json_int(conn_hostname_sessions, ranked_conn_hosts[i].name);
+                        cJSON_AddStringToObject(entry, "hostname", ranked_conn_hosts[i].name);
+                        cJSON_AddNumberToObject(entry, "total_seconds", ranked_conn_hosts[i].count);
+                        cJSON_AddNumberToObject(entry, "session_count", sessions);
+                        cJSON_AddItemToArray(top_connected_hostnames, entry);
+                    }
+
+                    free(ranked_conn_hosts);
+                }
+            }
+
+            if (cJSON_IsObject(conn_users) && conn_user_kinds > 0) {
+                struct ranked_counter_entry *ranked_conn_users =
+                    (struct ranked_counter_entry *)calloc((size_t)conn_user_kinds, sizeof(struct ranked_counter_entry));
+
+                if (ranked_conn_users) {
+                    int idx = 0;
+                    cJSON *it = NULL;
+                    cJSON_ArrayForEach(it, conn_users) {
+                        ranked_conn_users[idx].item = it;
+                        ranked_conn_users[idx].count = get_json_int(it, "total_connection_seconds");
+                        cJSON *display_name = cJSON_GetObjectItemCaseSensitive(it, "display_name");
+                        if (cJSON_IsString(display_name) && display_name->valuestring[0] != '\0') {
+                            snprintf(ranked_conn_users[idx].name, sizeof(ranked_conn_users[idx].name), "%s", display_name->valuestring);
+                        } else {
+                            snprintf(ranked_conn_users[idx].name, sizeof(ranked_conn_users[idx].name), "%s", it->string ? it->string : "unknown");
+                        }
+                        idx++;
+                    }
+
+                    qsort(ranked_conn_users, (size_t)conn_user_kinds, sizeof(struct ranked_counter_entry), compare_ranked_counters_desc);
+                    int lim = conn_user_kinds < 15 ? conn_user_kinds : 15;
+                    for (int i = 0; i < lim; i++) {
+                        cJSON *entry = cJSON_CreateObject();
+                        if (!entry) continue;
+                        cJSON_AddStringToObject(entry, "user", ranked_conn_users[i].name);
+                        cJSON_AddNumberToObject(entry, "total_seconds", ranked_conn_users[i].count);
+                        cJSON_AddNumberToObject(entry, "session_count", get_json_int(ranked_conn_users[i].item, "session_count"));
+                        cJSON_AddItemToArray(top_connected_users, entry);
+                    }
+
+                    free(ranked_conn_users);
                 }
             }
 
@@ -2399,6 +2607,8 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
             cJSON_AddItemToObject(leaderboards, "top_user_pc_pairs", top_user_pc_pairs);
             cJSON_AddItemToObject(leaderboards, "top_user_favorite_pcs", top_user_favorite_pcs);
             cJSON_AddItemToObject(leaderboards, "top_hostnames", top_hostnames);
+            cJSON_AddItemToObject(leaderboards, "top_connected_hostnames", top_connected_hostnames);
+            cJSON_AddItemToObject(leaderboards, "top_connected_users", top_connected_users);
 
             cJSON_AddNumberToObject(feature_stats, "version", get_json_int(feature_db, "version"));
             cJSON_AddNumberToObject(feature_stats, "created_at", get_json_ll(feature_db, "created_at"));
@@ -2411,6 +2621,7 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
             cJSON_AddItemToObject(feature_stats, "targets", cJSON_Duplicate(targets_obj, 1));
             cJSON_AddItemToObject(feature_stats, "user_target_pairs", cJSON_Duplicate(pairs_obj, 1));
             cJSON_AddItemToObject(feature_stats, "dispatch", cJSON_Duplicate(dispatch_obj, 1));
+            cJSON_AddItemToObject(feature_stats, "connections", cJSON_Duplicate(connections_obj, 1));
             cJSON_AddItemToObject(feature_stats, "recent_events", cJSON_Duplicate(recent_events, 1));
 
             cJSON_DeleteItemFromObjectCaseSensitive(db, "feature_stats");
@@ -2425,6 +2636,8 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
             cJSON_Delete(top_user_pc_pairs);
             cJSON_Delete(top_user_favorite_pcs);
             cJSON_Delete(top_hostnames);
+            cJSON_Delete(top_connected_hostnames);
+            cJSON_Delete(top_connected_users);
         }
 
         cJSON_Delete(feature_db);
@@ -2638,6 +2851,10 @@ void handle_upload_screenshot(struct mg_connection *c, struct mg_http_message *h
 void handle_ws_open(struct mg_connection *c) {
     const char *client_id = (char *)c->data;
 
+    if (client_id && client_id[0] != '\0' && strncmp(client_id, "admin", 5) != 0) {
+        (void)find_ws_session_slot(client_id, 1);
+    }
+
     // La notification Discord de connexion sera envoyée après réception des infos système
 
     // Generate token if user tokens OR admin tokens are enabled
@@ -2680,6 +2897,11 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
                 cJSON_IsString(ram) ? ram->valuestring : NULL,
                 cJSON_IsString(version) ? version->valuestring : NULL,
                 0);
+
+            if (cJSON_IsString(hostname) && hostname->valuestring[0] != '\0') {
+                ws_session_update_hostname(client_id, hostname->valuestring);
+            }
+            ws_session_account_elapsed(client_id, 0);
             
             printf("Info reçue de %s: Host=%s, OS=%s, Uptime=%s, CPU=%s, RAM=%s, Ver=%s\n", 
                    client_id,
@@ -2708,6 +2930,7 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
             cJSON *locked_item = cJSON_GetObjectItemCaseSensitive(json, "locked");
             int client_locked = (cJSON_IsBool(locked_item) && cJSON_IsTrue(locked_item)) ? 1 : 0;
             update_client_heartbeat(client_id, client_locked);
+            ws_session_account_elapsed(client_id, 0);
         }
         else if (cJSON_IsString(type_item) && strcmp(type_item->valuestring, "auth_admin") == 0) {
             cJSON *token = cJSON_GetObjectItemCaseSensitive(json, "token");
@@ -2861,6 +3084,9 @@ void send_discord_notification(const char *client_id, const char *event, const c
 void handle_ws_close(struct mg_connection *c) {
     const char *client_id = (char *)c->data;
     printf("Client déconnecté: %s\n", client_id);
+
+    ws_session_account_elapsed(client_id, 1);
+
     // Récupérer les infos avant suppression pour les inclure dans la notif
     struct client_info *info = get_client_info(client_id);
     if (info) {
