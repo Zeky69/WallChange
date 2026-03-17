@@ -12,6 +12,7 @@
 #include "auth.h"
 #include "clients.h"
 #include "api.h"
+#include "config.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,6 +40,64 @@ char g_admin_hash[160] = {0};
 
 struct client_info g_client_infos[MAX_CLIENTS];
 struct target_rl_entry g_target_rl_entries[MAX_TARGET_RL_CLIENTS];
+
+static char g_cors_allowed_origins[512] = "*";
+static char g_cors_headers_runtime[768];
+
+static const char *trim_spaces(const char *text) {
+    if (!text) return "";
+    while (*text == ' ' || *text == '\t') text++;
+    return text;
+}
+
+static int is_origin_allowed(const char *origin) {
+    if (!origin || origin[0] == '\0') return 1;
+    if (strcmp(g_cors_allowed_origins, "*") == 0) return 1;
+
+    char list_copy[sizeof(g_cors_allowed_origins)];
+    snprintf(list_copy, sizeof(list_copy), "%s", g_cors_allowed_origins);
+
+    char *saveptr = NULL;
+    char *item = strtok_r(list_copy, ",", &saveptr);
+    while (item) {
+        const char *candidate = trim_spaces(item);
+        if (strcmp(candidate, origin) == 0) {
+            return 1;
+        }
+        item = strtok_r(NULL, ",", &saveptr);
+    }
+    return 0;
+}
+
+static void select_cors_headers_for_request(struct mg_http_message *hm) {
+    const char *allow_origin = "*";
+
+    if (hm) {
+        struct mg_str *origin = mg_http_get_header(hm, "Origin");
+        if (origin && origin->len > 0) {
+            static char origin_value[256];
+            size_t len = origin->len;
+            if (len >= sizeof(origin_value)) len = sizeof(origin_value) - 1;
+            memcpy(origin_value, origin->buf, len);
+            origin_value[len] = '\0';
+
+            if (is_origin_allowed(origin_value)) {
+                allow_origin = origin_value;
+            } else {
+                allow_origin = "null";
+            }
+        }
+    }
+
+    snprintf(g_cors_headers_runtime, sizeof(g_cors_headers_runtime),
+             "Access-Control-Allow-Origin: %s\r\n"
+             "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+             "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"
+             "Vary: Origin\r\n",
+             allow_origin);
+
+    g_cors_headers = g_cors_headers_runtime;
+}
 
 static int build_client_id_from_uri(const struct mg_str *uri, char *dst, size_t dst_len) {
     if (!uri || !dst || dst_len < 2 || uri->len <= 1) return 0;
@@ -77,6 +136,8 @@ static int secure_mem_eq_str(const char *left, const char *right) {
 static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
     if (ev == MG_EV_HTTP_MSG) {
         struct mg_http_message *hm = (struct mg_http_message *)ev_data;
+
+        select_cors_headers_for_request(hm);
         
         // CORS preflight
         if (mg_match(hm->method, mg_str("OPTIONS"), NULL)) {
@@ -188,7 +249,7 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
         else if (mg_match(hm->uri, mg_str("/uploads/*"), NULL)) {
             struct mg_http_serve_opts opts = {
                 .root_dir = ".",
-                .extra_headers = "Access-Control-Allow-Origin: *\r\n"
+                .extra_headers = g_cors_headers
             };
             mg_http_serve_dir(c, hm, &opts);
         }
@@ -216,7 +277,9 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
         }
         // Page d'accueil
         else {
-            mg_http_reply(c, 200, "Content-Type: text/html\r\nAccess-Control-Allow-Origin: *\r\n", 
+            char headers[1024];
+            snprintf(headers, sizeof(headers), "Content-Type: text/html\r\n%s", g_cors_headers);
+            mg_http_reply(c, 200, headers,
                 "<h1>Wallchange Server v%s</h1>"
                 "<p>API disponible sur /api/*</p>", VERSION);
         }
@@ -254,7 +317,8 @@ static void print_help(const char *prog) {
 int main(int argc, char *argv[]) {
     struct mg_mgr mgr;
     int port = 8000;
-    static char cors_headers_dynamic[512];
+
+    wc_apply_default_environment();
     
     // Ignorer SIGCHLD pour éviter les processus zombies (Discord webhook forks)
     signal(SIGCHLD, SIG_IGN);
@@ -309,13 +373,10 @@ int main(int argc, char *argv[]) {
 
     const char *cors_origin = getenv("WALLCHANGE_CORS_ORIGIN");
     if (cors_origin && cors_origin[0] != '\0') {
-        snprintf(cors_headers_dynamic, sizeof(cors_headers_dynamic),
-                 "Access-Control-Allow-Origin: %s\r\n"
-                 "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
-                 "Access-Control-Allow-Headers: Content-Type, Authorization\r\n",
-                 cors_origin);
-        g_cors_headers = cors_headers_dynamic;
+        snprintf(g_cors_allowed_origins, sizeof(g_cors_allowed_origins), "%s", cors_origin);
     }
+
+    select_cors_headers_for_request(NULL);
     
     // Afficher la configuration
     printf("\n");

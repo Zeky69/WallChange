@@ -189,8 +189,10 @@ void handle_login(struct mg_connection *c, struct mg_http_message *hm) {
         cJSON_AddStringToObject(json, "token", g_admin_token);
         cJSON_AddStringToObject(json, "type", "admin");
         char *json_str = cJSON_Print(json);
+        char headers[1024];
+        snprintf(headers, sizeof(headers), "Content-Type: application/json\r\n%s", g_cors_headers);
         
-        mg_http_reply(c, 200, "Content-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\n", 
+        mg_http_reply(c, 200, headers,
                       "%s", json_str);
         
         printf("🔓 Login admin réussi pour '%s'\n", user);
@@ -223,8 +225,10 @@ void handle_login(struct mg_connection *c, struct mg_http_message *hm) {
                 cJSON_AddStringToObject(json, "token", g_client_infos[client_idx].token);
                 cJSON_AddStringToObject(json, "type", "user");
                 char *json_str = cJSON_Print(json);
+                char headers[1024];
+                snprintf(headers, sizeof(headers), "Content-Type: application/json\r\n%s", g_cors_headers);
                 
-                mg_http_reply(c, 200, "Content-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\n", 
+                mg_http_reply(c, 200, headers,
                               "%s", json_str);
                 
                 printf("🔓 Login utilisateur réussi pour '%s'\n", user);
@@ -332,7 +336,9 @@ void handle_update(struct mg_connection *c, struct mg_http_message *hm) {
 
 void handle_version(struct mg_connection *c, struct mg_http_message *hm) {
     (void)hm;
-    mg_http_reply(c, 200, "Content-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\n", VERSION);
+    char headers[1024];
+    snprintf(headers, sizeof(headers), "Content-Type: text/plain\r\n%s", g_cors_headers);
+    mg_http_reply(c, 200, headers, VERSION);
 }
 
 void handle_list(struct mg_connection *c, struct mg_http_message *hm) {
@@ -371,7 +377,9 @@ void handle_list(struct mg_connection *c, struct mg_http_message *hm) {
     }
     
     char *json_str = cJSON_Print(json);
-    mg_http_reply(c, 200, "Content-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\n", "%s", json_str);
+    char headers[1024];
+    snprintf(headers, sizeof(headers), "Content-Type: application/json\r\n%s", g_cors_headers);
+    mg_http_reply(c, 200, headers, "%s", json_str);
     free(json_str);
     cJSON_Delete(json);
 }
