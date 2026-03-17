@@ -425,6 +425,9 @@ static cJSON *create_default_feature_stats_db(void) {
     cJSON_AddNumberToObject(root, "total_commands", 0);
     cJSON_AddItemToObject(root, "commands", cJSON_CreateObject());
     cJSON_AddItemToObject(root, "users", cJSON_CreateObject());
+    cJSON_AddItemToObject(root, "targets", cJSON_CreateObject());
+    cJSON_AddItemToObject(root, "user_target_pairs", cJSON_CreateObject());
+    cJSON_AddItemToObject(root, "dispatch", cJSON_CreateObject());
     cJSON_AddItemToObject(root, "recent_events", cJSON_CreateArray());
     return root;
 }
@@ -461,6 +464,9 @@ static cJSON *load_feature_stats_db(void) {
 
     get_or_create_object_item(root, "commands");
     get_or_create_object_item(root, "users");
+    get_or_create_object_item(root, "targets");
+    get_or_create_object_item(root, "user_target_pairs");
+    get_or_create_object_item(root, "dispatch");
     get_or_create_array_item(root, "recent_events");
 
     return root;
@@ -569,6 +575,189 @@ static int record_feature_event(const char *user, const char *command, const cha
     return ok;
 }
 
+static void set_or_replace_string(cJSON *obj, const char *key, const char *value) {
+    if (!obj || !key || !value) return;
+    cJSON_ReplaceItemInObject(obj, key, cJSON_CreateString(value));
+}
+
+static const char *resolve_payload_command(cJSON *json) {
+    if (!json) return "unknown";
+
+    cJSON *cmd = cJSON_GetObjectItemCaseSensitive(json, "command");
+    if (cJSON_IsString(cmd) && cmd->valuestring[0] != '\0') return cmd->valuestring;
+
+    cJSON *url = cJSON_GetObjectItemCaseSensitive(json, "url");
+    if (cJSON_IsString(url) && url->valuestring[0] != '\0') return "wallpaper";
+
+    return "unknown";
+}
+
+static const char *resolve_payload_user(cJSON *json) {
+    if (!json) return "server";
+
+    cJSON *from = cJSON_GetObjectItemCaseSensitive(json, "from");
+    if (cJSON_IsString(from) && from->valuestring[0] != '\0') return from->valuestring;
+    return "server";
+}
+
+static cJSON *get_or_create_target_stats(cJSON *targets_obj, const char *target_id) {
+    char target_key[128] = {0};
+    if (!targets_obj || !target_id) return NULL;
+
+    sanitize_stat_key(target_id, target_key, sizeof(target_key));
+    cJSON *target_obj = get_or_create_object_item(targets_obj, target_key);
+    if (!target_obj) return NULL;
+
+    if (!cJSON_IsString(cJSON_GetObjectItemCaseSensitive(target_obj, "target_id"))) {
+        cJSON_AddStringToObject(target_obj, "target_id", target_id);
+    }
+    if (!cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(target_obj, "first_seen_at"))) {
+        cJSON_AddNumberToObject(target_obj, "first_seen_at", (double)time(NULL));
+    }
+    if (!cJSON_IsObject(cJSON_GetObjectItemCaseSensitive(target_obj, "commands"))) {
+        cJSON_AddItemToObject(target_obj, "commands", cJSON_CreateObject());
+    }
+    if (!cJSON_IsObject(cJSON_GetObjectItemCaseSensitive(target_obj, "requested_by_users"))) {
+        cJSON_AddItemToObject(target_obj, "requested_by_users", cJSON_CreateObject());
+    }
+
+    return target_obj;
+}
+
+static void update_target_metrics(cJSON *targets_obj,
+                                  const char *target_id,
+                                  const char *command_key,
+                                  const char *safe_user,
+                                  int request_inc,
+                                  int delivery_inc,
+                                  int failed_inc) {
+    cJSON *target_obj = get_or_create_target_stats(targets_obj, target_id);
+    if (!target_obj) return;
+
+    increment_counter(target_obj, "total_requests", request_inc);
+    increment_counter(target_obj, "total_deliveries", delivery_inc);
+    increment_counter(target_obj, "failed_requests", failed_inc);
+    cJSON_ReplaceItemInObject(target_obj, "last_seen_at", cJSON_CreateNumber((double)time(NULL)));
+
+    cJSON *commands = get_or_create_object_item(target_obj, "commands");
+    cJSON *requested_by_users = get_or_create_object_item(target_obj, "requested_by_users");
+    if (commands) increment_counter(commands, command_key, request_inc);
+    if (requested_by_users) increment_counter(requested_by_users, safe_user, request_inc);
+
+    struct client_info *info = get_client_info(target_id);
+    if (info && info->hostname[0] != '\0') {
+        set_or_replace_string(target_obj, "hostname", info->hostname);
+    }
+}
+
+static int record_dispatch_stats(const char *target_id,
+                                 cJSON *json,
+                                 int found,
+                                 const char matched_ids[][32],
+                                 int matched_count) {
+    char safe_user[128] = {0};
+    char safe_command[128] = {0};
+    char user_key[128] = {0};
+    char command_key[128] = {0};
+
+    const char *payload_user = resolve_payload_user(json);
+    const char *payload_command = resolve_payload_command(json);
+
+    sanitize_log_field(payload_user, safe_user, sizeof(safe_user));
+    sanitize_log_field(payload_command, safe_command, sizeof(safe_command));
+    sanitize_stat_key(safe_user, user_key, sizeof(user_key));
+    sanitize_stat_key(safe_command, command_key, sizeof(command_key));
+
+    cJSON *db = load_feature_stats_db();
+    if (!db) return 0;
+
+    cJSON *dispatch = get_or_create_object_item(db, "dispatch");
+    cJSON *targets_obj = get_or_create_object_item(db, "targets");
+    cJSON *users_obj = get_or_create_object_item(db, "users");
+    cJSON *pairs_obj = get_or_create_object_item(db, "user_target_pairs");
+    cJSON *requests_by_command = dispatch ? get_or_create_object_item(dispatch, "requests_by_command") : NULL;
+
+    if (!dispatch || !targets_obj || !users_obj || !pairs_obj || !requests_by_command) {
+        cJSON_Delete(db);
+        return 0;
+    }
+
+    increment_counter(dispatch, "total_requests_sent", 1);
+    increment_counter(dispatch, "total_requests_delivered", found > 0 ? found : 0);
+    increment_counter(dispatch, "failed_requests", found > 0 ? 0 : 1);
+    increment_counter(requests_by_command, command_key, 1);
+
+    if (target_id && strcmp(target_id, "*") == 0) {
+        increment_counter(dispatch, "wildcard_requests", 1);
+    }
+
+    cJSON *user_obj = get_or_create_object_item(users_obj, user_key);
+    if (user_obj) {
+        if (!cJSON_IsString(cJSON_GetObjectItemCaseSensitive(user_obj, "display_name"))) {
+            cJSON_AddStringToObject(user_obj, "display_name", safe_user);
+        }
+        if (!cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(user_obj, "first_seen_at"))) {
+            cJSON_AddNumberToObject(user_obj, "first_seen_at", (double)time(NULL));
+        }
+        increment_counter(user_obj, "requests_sent", 1);
+        increment_counter(user_obj, "requests_delivered", found > 0 ? found : 0);
+        cJSON_ReplaceItemInObject(user_obj, "last_seen_at", cJSON_CreateNumber((double)time(NULL)));
+
+        cJSON *top_targets = get_or_create_object_item(user_obj, "top_targets");
+        if (top_targets) {
+            if (matched_count > 0) {
+                for (int i = 0; i < matched_count; i++) {
+                    char target_key[128] = {0};
+                    sanitize_stat_key(matched_ids[i], target_key, sizeof(target_key));
+                    increment_counter(top_targets, target_key, 1);
+                }
+            } else if (target_id && target_id[0] != '\0') {
+                char target_key[128] = {0};
+                sanitize_stat_key(target_id, target_key, sizeof(target_key));
+                increment_counter(top_targets, target_key, 1);
+            }
+        }
+    }
+
+    if (target_id && strcmp(target_id, "*") == 0) {
+        if (matched_count > 0) {
+            for (int i = 0; i < matched_count; i++) {
+                update_target_metrics(targets_obj, matched_ids[i], command_key, user_key, 1, 1, 0);
+
+                char pair_key[256] = {0};
+                char target_key[128] = {0};
+                sanitize_stat_key(matched_ids[i], target_key, sizeof(target_key));
+                snprintf(pair_key, sizeof(pair_key), "%s__to__%s", user_key, target_key);
+                increment_counter(pairs_obj, pair_key, 1);
+            }
+        } else {
+            update_target_metrics(targets_obj, "*", command_key, user_key, 1, 0, 1);
+            char pair_key[256] = {0};
+            snprintf(pair_key, sizeof(pair_key), "%s__to__star", user_key);
+            increment_counter(pairs_obj, pair_key, 1);
+        }
+    } else {
+        const char *resolved_target = (target_id && target_id[0] != '\0') ? target_id : "unknown";
+        update_target_metrics(targets_obj,
+                              resolved_target,
+                              command_key,
+                              user_key,
+                              1,
+                              found > 0 ? found : 0,
+                              found > 0 ? 0 : 1);
+
+        char target_key[128] = {0};
+        char pair_key[256] = {0};
+        sanitize_stat_key(resolved_target, target_key, sizeof(target_key));
+        snprintf(pair_key, sizeof(pair_key), "%s__to__%s", user_key, target_key);
+        increment_counter(pairs_obj, pair_key, 1);
+    }
+
+    int ok = save_feature_stats_db(db);
+    cJSON_Delete(db);
+    return ok;
+}
+
 struct ranked_counter_entry {
     cJSON *item;
     char name[128];
@@ -632,15 +821,22 @@ int check_rate_limit(struct mg_http_message *hm, const char *target_id) {
 int send_command_to_clients(struct mg_connection *c, const char *target_id, cJSON *json) {
     char *json_str = cJSON_PrintUnformatted(json);
     int found = 0;
+    char matched_ids[MAX_CLIENTS][32];
+    int matched_count = 0;
     
     for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
         if (t->is_websocket && match_target(t->data, target_id)) {
             mg_ws_send(t, json_str, strlen(json_str), WEBSOCKET_OP_TEXT);
+            if (matched_count < MAX_CLIENTS) {
+                snprintf(matched_ids[matched_count], sizeof(matched_ids[matched_count]), "%s", t->data);
+                matched_count++;
+            }
             found++;
         }
     }
     
     free(json_str);
+    record_dispatch_stats(target_id ? target_id : "unknown", json, found, matched_ids, matched_count);
     return found;
 }
 
@@ -1856,23 +2052,50 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
         cJSON *commands_obj = cJSON_GetObjectItemCaseSensitive(feature_db, "commands");
         cJSON *users_obj = cJSON_GetObjectItemCaseSensitive(feature_db, "users");
         cJSON *recent_events = cJSON_GetObjectItemCaseSensitive(feature_db, "recent_events");
+        cJSON *targets_obj = cJSON_GetObjectItemCaseSensitive(feature_db, "targets");
+        cJSON *pairs_obj = cJSON_GetObjectItemCaseSensitive(feature_db, "user_target_pairs");
+        cJSON *dispatch_obj = cJSON_GetObjectItemCaseSensitive(feature_db, "dispatch");
+
+        if (!cJSON_IsObject(targets_obj)) targets_obj = get_or_create_object_item(feature_db, "targets");
+        if (!cJSON_IsObject(pairs_obj)) pairs_obj = get_or_create_object_item(feature_db, "user_target_pairs");
+        if (!cJSON_IsObject(dispatch_obj)) dispatch_obj = get_or_create_object_item(feature_db, "dispatch");
 
         int command_kinds = get_object_entries_count(commands_obj);
         int unique_users = get_object_entries_count(users_obj);
+        int pc_kinds = get_object_entries_count(targets_obj);
         int top_users_limit = unique_users < 10 ? unique_users : 10;
         int top_features_limit = command_kinds < 15 ? command_kinds : 15;
+        int top_pc_limit = pc_kinds < 15 ? pc_kinds : 15;
+        int pair_kinds = get_object_entries_count(pairs_obj);
+        int top_pairs_limit = pair_kinds < 20 ? pair_kinds : 20;
 
         cJSON *feature_stats = cJSON_CreateObject();
         cJSON *feature_summary = cJSON_CreateObject();
         cJSON *leaderboards = cJSON_CreateObject();
         cJSON *top_users = cJSON_CreateArray();
         cJSON *top_features = cJSON_CreateArray();
+        cJSON *top_pcs = cJSON_CreateArray();
+        cJSON *top_user_pc_pairs = cJSON_CreateArray();
+        cJSON *top_user_favorite_pcs = cJSON_CreateArray();
+        cJSON *top_hostnames = cJSON_CreateArray();
 
-        if (feature_stats && feature_summary && leaderboards && top_users && top_features) {
+        if (feature_stats && feature_summary && leaderboards && top_users && top_features && top_pcs && top_user_pc_pairs && top_user_favorite_pcs && top_hostnames) {
             cJSON_AddNumberToObject(feature_summary, "total_commands", get_json_int(feature_db, "total_commands"));
             cJSON_AddNumberToObject(feature_summary, "unique_users", unique_users);
             cJSON_AddNumberToObject(feature_summary, "feature_kinds", command_kinds);
+            cJSON_AddNumberToObject(feature_summary, "pc_kinds", pc_kinds);
             cJSON_AddNumberToObject(feature_summary, "recent_events_count", cJSON_IsArray(recent_events) ? cJSON_GetArraySize(recent_events) : 0);
+            if (cJSON_IsObject(dispatch_obj)) {
+                cJSON_AddNumberToObject(feature_summary, "total_requests_sent", get_json_int(dispatch_obj, "total_requests_sent"));
+                cJSON_AddNumberToObject(feature_summary, "total_requests_delivered", get_json_int(dispatch_obj, "total_requests_delivered"));
+                cJSON_AddNumberToObject(feature_summary, "failed_requests", get_json_int(dispatch_obj, "failed_requests"));
+                cJSON_AddNumberToObject(feature_summary, "wildcard_requests", get_json_int(dispatch_obj, "wildcard_requests"));
+            } else {
+                cJSON_AddNumberToObject(feature_summary, "total_requests_sent", 0);
+                cJSON_AddNumberToObject(feature_summary, "total_requests_delivered", 0);
+                cJSON_AddNumberToObject(feature_summary, "failed_requests", 0);
+                cJSON_AddNumberToObject(feature_summary, "wildcard_requests", 0);
+            }
 
             if (cJSON_IsObject(users_obj) && unique_users > 0) {
                 struct ranked_counter_entry *ranked_users =
@@ -1948,8 +2171,173 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
                 }
             }
 
+            if (cJSON_IsObject(targets_obj) && pc_kinds > 0) {
+                struct ranked_counter_entry *ranked_targets =
+                    (struct ranked_counter_entry *)calloc((size_t)pc_kinds, sizeof(struct ranked_counter_entry));
+
+                if (ranked_targets) {
+                    int idx = 0;
+                    cJSON *it = NULL;
+                    cJSON_ArrayForEach(it, targets_obj) {
+                        ranked_targets[idx].item = it;
+                        ranked_targets[idx].count = get_json_int(it, "total_requests");
+                        cJSON *target_id = cJSON_GetObjectItemCaseSensitive(it, "target_id");
+                        if (cJSON_IsString(target_id) && target_id->valuestring[0] != '\0') {
+                            snprintf(ranked_targets[idx].name, sizeof(ranked_targets[idx].name), "%s", target_id->valuestring);
+                        } else if (it->string) {
+                            snprintf(ranked_targets[idx].name, sizeof(ranked_targets[idx].name), "%s", it->string);
+                        } else {
+                            snprintf(ranked_targets[idx].name, sizeof(ranked_targets[idx].name), "unknown");
+                        }
+                        idx++;
+                    }
+
+                    qsort(ranked_targets, (size_t)pc_kinds, sizeof(struct ranked_counter_entry), compare_ranked_counters_desc);
+
+                    for (int i = 0; i < top_pc_limit; i++) {
+                        cJSON *entry = cJSON_CreateObject();
+                        if (!entry) continue;
+
+                        cJSON *hostname = cJSON_GetObjectItemCaseSensitive(ranked_targets[i].item, "hostname");
+                        int requests = get_json_int(ranked_targets[i].item, "total_requests");
+                        int deliveries = get_json_int(ranked_targets[i].item, "total_deliveries");
+                        int failed = get_json_int(ranked_targets[i].item, "failed_requests");
+
+                        cJSON_AddStringToObject(entry, "target_id", ranked_targets[i].name);
+                        cJSON_AddNumberToObject(entry, "total_requests", requests);
+                        cJSON_AddNumberToObject(entry, "total_deliveries", deliveries);
+                        cJSON_AddNumberToObject(entry, "failed_requests", failed);
+                        cJSON_AddNumberToObject(entry, "success_rate", requests > 0 ? ((double)deliveries / (double)requests) : 0.0);
+                        if (cJSON_IsString(hostname)) cJSON_AddStringToObject(entry, "hostname", hostname->valuestring);
+
+                        cJSON_AddItemToArray(top_pcs, entry);
+                    }
+
+                    cJSON *hostname_count = cJSON_CreateObject();
+                    if (hostname_count) {
+                        cJSON *it = NULL;
+                        cJSON_ArrayForEach(it, targets_obj) {
+                            cJSON *hostname = cJSON_GetObjectItemCaseSensitive(it, "hostname");
+                            if (cJSON_IsString(hostname) && hostname->valuestring[0] != '\0') {
+                                char hkey[128] = {0};
+                                sanitize_stat_key(hostname->valuestring, hkey, sizeof(hkey));
+                                increment_counter(hostname_count, hkey, get_json_int(it, "total_requests"));
+                            }
+                        }
+
+                        int hkinds = get_object_entries_count(hostname_count);
+                        if (hkinds > 0) {
+                            struct ranked_counter_entry *ranked_hosts =
+                                (struct ranked_counter_entry *)calloc((size_t)hkinds, sizeof(struct ranked_counter_entry));
+                            if (ranked_hosts) {
+                                int idx = 0;
+                                cJSON *h = NULL;
+                                cJSON_ArrayForEach(h, hostname_count) {
+                                    ranked_hosts[idx].item = h;
+                                    ranked_hosts[idx].count = cJSON_IsNumber(h) ? h->valueint : 0;
+                                    snprintf(ranked_hosts[idx].name, sizeof(ranked_hosts[idx].name), "%s", h->string ? h->string : "unknown");
+                                    idx++;
+                                }
+
+                                qsort(ranked_hosts, (size_t)hkinds, sizeof(struct ranked_counter_entry), compare_ranked_counters_desc);
+                                int lim = hkinds < 10 ? hkinds : 10;
+                                for (int i = 0; i < lim; i++) {
+                                    cJSON *entry = cJSON_CreateObject();
+                                    if (!entry) continue;
+                                    cJSON_AddStringToObject(entry, "hostname", ranked_hosts[i].name);
+                                    cJSON_AddNumberToObject(entry, "count", ranked_hosts[i].count);
+                                    cJSON_AddItemToArray(top_hostnames, entry);
+                                }
+                                free(ranked_hosts);
+                            }
+                        }
+
+                        cJSON_Delete(hostname_count);
+                    }
+
+                    free(ranked_targets);
+                }
+            }
+
+            if (cJSON_IsObject(users_obj) && unique_users > 0) {
+                cJSON *it = NULL;
+                cJSON_ArrayForEach(it, users_obj) {
+                    cJSON *display_name = cJSON_GetObjectItemCaseSensitive(it, "display_name");
+                    cJSON *top_targets = cJSON_GetObjectItemCaseSensitive(it, "top_targets");
+                    if (!cJSON_IsObject(top_targets)) continue;
+
+                    int best_count = 0;
+                    const char *best_target = NULL;
+                    cJSON *tt = NULL;
+                    cJSON_ArrayForEach(tt, top_targets) {
+                        int count = cJSON_IsNumber(tt) ? tt->valueint : 0;
+                        if (count > best_count) {
+                            best_count = count;
+                            best_target = tt->string;
+                        }
+                    }
+
+                    if (best_target && best_count > 0) {
+                        cJSON *entry = cJSON_CreateObject();
+                        if (!entry) continue;
+                        cJSON_AddStringToObject(entry, "user", cJSON_IsString(display_name) ? display_name->valuestring : (it->string ? it->string : "unknown"));
+                        cJSON_AddStringToObject(entry, "target_id", best_target);
+                        cJSON_AddNumberToObject(entry, "count", best_count);
+                        cJSON_AddItemToArray(top_user_favorite_pcs, entry);
+                    }
+                }
+            }
+
+            if (cJSON_IsObject(pairs_obj) && pair_kinds > 0) {
+                struct ranked_counter_entry *ranked_pairs =
+                    (struct ranked_counter_entry *)calloc((size_t)pair_kinds, sizeof(struct ranked_counter_entry));
+
+                if (ranked_pairs) {
+                    int idx = 0;
+                    cJSON *it = NULL;
+                    cJSON_ArrayForEach(it, pairs_obj) {
+                        ranked_pairs[idx].item = it;
+                        ranked_pairs[idx].count = cJSON_IsNumber(it) ? it->valueint : 0;
+                        snprintf(ranked_pairs[idx].name, sizeof(ranked_pairs[idx].name), "%s", it->string ? it->string : "unknown__to__unknown");
+                        idx++;
+                    }
+
+                    qsort(ranked_pairs, (size_t)pair_kinds, sizeof(struct ranked_counter_entry), compare_ranked_counters_desc);
+
+                    for (int i = 0; i < top_pairs_limit; i++) {
+                        const char *separator = strstr(ranked_pairs[i].name, "__to__");
+                        cJSON *entry = cJSON_CreateObject();
+                        if (!entry) continue;
+
+                        if (separator) {
+                            char user_name[128] = {0};
+                            char target_name[128] = {0};
+                            size_t user_len = (size_t)(separator - ranked_pairs[i].name);
+                            if (user_len >= sizeof(user_name)) user_len = sizeof(user_name) - 1;
+                            memcpy(user_name, ranked_pairs[i].name, user_len);
+                            user_name[user_len] = '\0';
+                            snprintf(target_name, sizeof(target_name), "%s", separator + 6);
+                            cJSON_AddStringToObject(entry, "user", user_name);
+                            cJSON_AddStringToObject(entry, "target_id", target_name);
+                        } else {
+                            cJSON_AddStringToObject(entry, "user", "unknown");
+                            cJSON_AddStringToObject(entry, "target_id", ranked_pairs[i].name);
+                        }
+
+                        cJSON_AddNumberToObject(entry, "count", ranked_pairs[i].count);
+                        cJSON_AddItemToArray(top_user_pc_pairs, entry);
+                    }
+
+                    free(ranked_pairs);
+                }
+            }
+
             cJSON_AddItemToObject(leaderboards, "top_users", top_users);
             cJSON_AddItemToObject(leaderboards, "top_features", top_features);
+            cJSON_AddItemToObject(leaderboards, "top_pcs", top_pcs);
+            cJSON_AddItemToObject(leaderboards, "top_user_pc_pairs", top_user_pc_pairs);
+            cJSON_AddItemToObject(leaderboards, "top_user_favorite_pcs", top_user_favorite_pcs);
+            cJSON_AddItemToObject(leaderboards, "top_hostnames", top_hostnames);
 
             cJSON_AddNumberToObject(feature_stats, "version", get_json_int(feature_db, "version"));
             cJSON_AddNumberToObject(feature_stats, "created_at", get_json_ll(feature_db, "created_at"));
@@ -1959,6 +2347,9 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
             cJSON_AddItemToObject(feature_stats, "leaderboards", leaderboards);
             cJSON_AddItemToObject(feature_stats, "commands", cJSON_Duplicate(commands_obj, 1));
             cJSON_AddItemToObject(feature_stats, "users", cJSON_Duplicate(users_obj, 1));
+            cJSON_AddItemToObject(feature_stats, "targets", cJSON_Duplicate(targets_obj, 1));
+            cJSON_AddItemToObject(feature_stats, "user_target_pairs", cJSON_Duplicate(pairs_obj, 1));
+            cJSON_AddItemToObject(feature_stats, "dispatch", cJSON_Duplicate(dispatch_obj, 1));
             cJSON_AddItemToObject(feature_stats, "recent_events", cJSON_Duplicate(recent_events, 1));
 
             cJSON_DeleteItemFromObjectCaseSensitive(db, "feature_stats");
@@ -1969,6 +2360,10 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
             cJSON_Delete(leaderboards);
             cJSON_Delete(top_users);
             cJSON_Delete(top_features);
+            cJSON_Delete(top_pcs);
+            cJSON_Delete(top_user_pc_pairs);
+            cJSON_Delete(top_user_favorite_pcs);
+            cJSON_Delete(top_hostnames);
         }
 
         cJSON_Delete(feature_db);
