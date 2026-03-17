@@ -120,6 +120,14 @@ static int build_client_id_from_uri(const struct mg_str *uri, char *dst, size_t 
     return 1;
 }
 
+static int uri_has_prefix(const struct mg_str *uri, const char *prefix) {
+    size_t prefix_len;
+    if (!uri || !prefix) return 0;
+    prefix_len = strlen(prefix);
+    if (uri->len < prefix_len) return 0;
+    return memcmp(uri->buf, prefix, prefix_len) == 0;
+}
+
 static int secure_mem_eq_str(const char *left, const char *right) {
     if (!left || !right) return 0;
     size_t left_len = strlen(left);
@@ -252,7 +260,7 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
             handle_stats(c, hm);
         }
         // Servir les fichiers uploadés
-        else if (mg_match(hm->uri, mg_str("/uploads/*"), NULL)) {
+        else if (uri_has_prefix(&hm->uri, "/uploads/") || mg_match(hm->uri, mg_str("/uploads"), NULL)) {
             struct mg_http_serve_opts opts = {
                 .root_dir = ".",
                 .extra_headers = g_cors_headers
