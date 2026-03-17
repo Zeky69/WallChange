@@ -1259,6 +1259,74 @@ void handle_screenshot_request(struct mg_connection *c, struct mg_http_message *
     }
 }
 
+void handle_screenshot_latest(struct mg_connection *c, struct mg_http_message *hm) {
+    if (!validate_bearer_token(hm)) {
+        mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
+        return;
+    }
+
+    char target_id[32];
+    char safe_target_id[64] = {0};
+    get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
+
+    if (strlen(target_id) == 0) {
+        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
+        return;
+    }
+
+    const char *user = get_user_from_token(hm);
+    int is_admin = validate_admin_token(hm);
+    if (!is_admin && (!user || strcmp(user, target_id) != 0)) {
+        mg_http_reply(c, 403, g_cors_headers, "Forbidden: You can only access your own screenshot\n");
+        return;
+    }
+
+    sanitize_filename(safe_target_id, target_id, strlen(target_id));
+    if (safe_target_id[0] == '\0') {
+        mg_http_reply(c, 400, g_cors_headers, "Invalid 'id' parameter\n");
+        return;
+    }
+
+    char path[512];
+    snprintf(path, sizeof(path), "%s/screenshots/%s.jpg", g_upload_dir, safe_target_id);
+
+    struct stat st;
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+        mg_http_reply(c, 404, g_cors_headers, "No screenshot available\n");
+        return;
+    }
+
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        mg_http_reply(c, 500, g_cors_headers, "Unable to read screenshot\n");
+        return;
+    }
+
+    char *data = (char *)malloc((size_t)st.st_size);
+    if (!data) {
+        fclose(fp);
+        mg_http_reply(c, 500, g_cors_headers, "Not enough memory\n");
+        return;
+    }
+
+    size_t read_bytes = fread(data, 1, (size_t)st.st_size, fp);
+    fclose(fp);
+
+    if (read_bytes != (size_t)st.st_size) {
+        free(data);
+        mg_http_reply(c, 500, g_cors_headers, "Failed to load screenshot\n");
+        return;
+    }
+
+    char headers[1024];
+    snprintf(headers, sizeof(headers),
+             "Content-Type: image/jpeg\r\n"
+             "Cache-Control: no-store\r\n"
+             "%s", g_cors_headers);
+    mg_http_reply(c, 200, headers, "%.*s", (int)read_bytes, data);
+    free(data);
+}
+
 void handle_upload_screenshot(struct mg_connection *c, struct mg_http_message *hm) {
     // Only accept uploads from valid clients (users)
     if (!validate_bearer_token(hm)) {

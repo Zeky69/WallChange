@@ -242,6 +242,9 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
         else if (mg_match(hm->uri, mg_str("/api/screenshot"), NULL)) {
             handle_screenshot_request(c, hm);
         }
+        else if (mg_match(hm->uri, mg_str("/api/screenshot/latest"), NULL)) {
+            handle_screenshot_latest(c, hm);
+        }
         else if (mg_match(hm->uri, mg_str("/api/upload_screenshot"), NULL)) {
             handle_upload_screenshot(c, hm);
         }
