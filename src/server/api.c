@@ -2,6 +2,7 @@
 #include "auth.h"
 #include "clients.h"
 #include "common/image_utils.h"
+#include "common/stb_image.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,11 +10,16 @@
 #include <unistd.h>
 #include <signal.h>
 #include <dirent.h>
+#include <ctype.h>
 
 #define LOGIN_RL_WINDOW_SEC 60
 #define LOGIN_RL_MAX_ATTEMPTS 6
 #define MAX_UPLOAD_FILE_BYTES (20 * 1024 * 1024)
 #define MAX_UPLOAD_DIR_BYTES (1024LL * 1024LL * 1024LL)
+#define STATS_DB_FILE "uploads/image_stats.json"
+#define FEATURE_STATS_DB_FILE "uploads/feature_stats.json"
+#define UNIQUE_IMAGES_DIR "uploads/unique"
+#define FEATURE_RECENT_EVENTS_MAX 2000
 
 struct login_rl_entry {
     char user[64];
@@ -110,6 +116,482 @@ static long long get_dir_size_bytes(const char *path) {
     return total;
 }
 
+static int ensure_directory_exists(const char *path) {
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        return S_ISDIR(st.st_mode) ? 1 : 0;
+    }
+    return mkdir(path, 0755) == 0;
+}
+
+static int ensure_stats_storage(void) {
+    if (!ensure_directory_exists(g_upload_dir)) return 0;
+    if (!ensure_directory_exists(UNIQUE_IMAGES_DIR)) return 0;
+    return 1;
+}
+
+static int image_is_valid_buffer(const unsigned char *data, size_t len) {
+    int w = 0, h = 0, channels = 0;
+    return stbi_info_from_memory(data, (int) len, &w, &h, &channels);
+}
+
+static void bytes_to_hex(const unsigned char *bytes, size_t len, char *hex_out, size_t hex_out_len) {
+    static const char *hex = "0123456789abcdef";
+    if (!bytes || !hex_out || hex_out_len < (len * 2 + 1)) return;
+
+    for (size_t i = 0; i < len; i++) {
+        hex_out[i * 2] = hex[(bytes[i] >> 4) & 0x0F];
+        hex_out[i * 2 + 1] = hex[bytes[i] & 0x0F];
+    }
+    hex_out[len * 2] = '\0';
+}
+
+static void compute_sha256_hex(const unsigned char *data, size_t len, char *hash_out, size_t hash_out_len) {
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+    SHA256(data, len, digest);
+    bytes_to_hex(digest, SHA256_DIGEST_LENGTH, hash_out, hash_out_len);
+}
+
+static void extract_safe_extension(const char *filename, char *ext_out, size_t ext_out_len) {
+    if (!ext_out || ext_out_len == 0) return;
+    ext_out[0] = '\0';
+    if (!filename || filename[0] == '\0') {
+        snprintf(ext_out, ext_out_len, "bin");
+        return;
+    }
+
+    const char *dot = strrchr(filename, '.');
+    if (!dot || dot[1] == '\0') {
+        snprintf(ext_out, ext_out_len, "bin");
+        return;
+    }
+
+    size_t j = 0;
+    for (size_t i = 1; dot[i] != '\0' && j < ext_out_len - 1; i++) {
+        char c = (char)tolower((unsigned char)dot[i]);
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            ext_out[j++] = c;
+        }
+    }
+
+    ext_out[j] = '\0';
+    if (j == 0) snprintf(ext_out, ext_out_len, "bin");
+}
+
+static const char *guess_mime_type(const char *ext) {
+    if (!ext) return "application/octet-stream";
+    if (strcmp(ext, "png") == 0) return "image/png";
+    if (strcmp(ext, "jpg") == 0 || strcmp(ext, "jpeg") == 0) return "image/jpeg";
+    if (strcmp(ext, "bmp") == 0) return "image/bmp";
+    if (strcmp(ext, "gif") == 0) return "image/gif";
+    if (strcmp(ext, "webp") == 0) return "image/webp";
+    if (strcmp(ext, "tga") == 0) return "image/x-tga";
+    return "application/octet-stream";
+}
+
+static cJSON *create_default_stats_db(void) {
+    time_t now = time(NULL);
+
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return NULL;
+
+    cJSON_AddNumberToObject(root, "version", 1);
+    cJSON_AddNumberToObject(root, "created_at", (double) now);
+    cJSON_AddNumberToObject(root, "updated_at", (double) now);
+    cJSON_AddNumberToObject(root, "last_upload_at", 0);
+    cJSON_AddNumberToObject(root, "total_uploads", 0);
+    cJSON_AddNumberToObject(root, "total_unique_images", 0);
+    cJSON_AddNumberToObject(root, "total_duplicate_uploads", 0);
+    cJSON_AddNumberToObject(root, "total_bytes_uploaded", 0);
+    cJSON_AddNumberToObject(root, "total_client_deliveries", 0);
+    cJSON_AddItemToObject(root, "images", cJSON_CreateArray());
+    return root;
+}
+
+static cJSON *load_stats_db(void) {
+    FILE *fp = fopen(STATS_DB_FILE, "rb");
+    if (!fp) return create_default_stats_db();
+
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return create_default_stats_db();
+    }
+    long size = ftell(fp);
+    if (size <= 0) {
+        fclose(fp);
+        return create_default_stats_db();
+    }
+    rewind(fp);
+
+    char *content = (char *)malloc((size_t)size + 1);
+    if (!content) {
+        fclose(fp);
+        return create_default_stats_db();
+    }
+
+    size_t read_len = fread(content, 1, (size_t)size, fp);
+    fclose(fp);
+    content[read_len] = '\0';
+
+    cJSON *root = cJSON_Parse(content);
+    free(content);
+
+    if (!root) return create_default_stats_db();
+
+    cJSON *images = cJSON_GetObjectItemCaseSensitive(root, "images");
+    if (!cJSON_IsArray(images)) {
+        cJSON_DeleteItemFromObjectCaseSensitive(root, "images");
+        cJSON_AddItemToObject(root, "images", cJSON_CreateArray());
+    }
+
+    return root;
+}
+
+static int save_stats_db(cJSON *db) {
+    if (!db) return 0;
+
+    if (!ensure_stats_storage()) return 0;
+
+    cJSON_ReplaceItemInObject(db, "updated_at", cJSON_CreateNumber((double)time(NULL)));
+
+    char *raw = cJSON_Print(db);
+    if (!raw) return 0;
+
+    FILE *fp = fopen(STATS_DB_FILE, "wb");
+    if (!fp) {
+        free(raw);
+        return 0;
+    }
+
+    fwrite(raw, 1, strlen(raw), fp);
+    fclose(fp);
+    free(raw);
+    return 1;
+}
+
+static cJSON *find_image_stat_by_hash(cJSON *db, const char *hash) {
+    if (!db || !hash) return NULL;
+
+    cJSON *images = cJSON_GetObjectItemCaseSensitive(db, "images");
+    if (!cJSON_IsArray(images)) return NULL;
+
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, images) {
+        cJSON *hash_item = cJSON_GetObjectItemCaseSensitive(item, "hash");
+        if (cJSON_IsString(hash_item) && strcmp(hash_item->valuestring, hash) == 0) {
+            return item;
+        }
+    }
+
+    return NULL;
+}
+
+static int get_json_int(cJSON *obj, const char *key) {
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, key);
+    if (!cJSON_IsNumber(item)) return 0;
+    return item->valueint;
+}
+
+static long long get_json_ll(cJSON *obj, const char *key) {
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, key);
+    if (!cJSON_IsNumber(item)) return 0;
+    return (long long)item->valuedouble;
+}
+
+static void set_json_number(cJSON *obj, const char *key, double value) {
+    cJSON_ReplaceItemInObject(obj, key, cJSON_CreateNumber(value));
+}
+
+static int record_image_upload_stat(const char *hash,
+                                    const char *stored_path,
+                                    const char *original_name,
+                                    const char *mime,
+                                    size_t size_bytes,
+                                    int client_deliveries) {
+    if (!hash || !stored_path) return 0;
+
+    cJSON *db = load_stats_db();
+    if (!db) return 0;
+
+    cJSON *images = cJSON_GetObjectItemCaseSensitive(db, "images");
+    if (!cJSON_IsArray(images)) {
+        cJSON_Delete(db);
+        return 0;
+    }
+
+    time_t now = time(NULL);
+    cJSON *entry = find_image_stat_by_hash(db, hash);
+    int is_new = (entry == NULL);
+
+    if (!entry) {
+        entry = cJSON_CreateObject();
+        cJSON_AddStringToObject(entry, "hash", hash);
+        cJSON_AddStringToObject(entry, "stored_path", stored_path);
+        cJSON_AddStringToObject(entry, "original_name", original_name ? original_name : "upload.bin");
+        cJSON_AddStringToObject(entry, "mime", mime ? mime : "application/octet-stream");
+        cJSON_AddNumberToObject(entry, "size_bytes", (double)size_bytes);
+        cJSON_AddNumberToObject(entry, "first_seen_at", (double)now);
+        cJSON_AddNumberToObject(entry, "last_seen_at", (double)now);
+        cJSON_AddNumberToObject(entry, "upload_count", 1);
+        cJSON_AddItemToArray(images, entry);
+    } else {
+        set_json_number(entry, "last_seen_at", (double)now);
+        set_json_number(entry, "upload_count", (double)(get_json_int(entry, "upload_count") + 1));
+
+        cJSON *name_item = cJSON_GetObjectItemCaseSensitive(entry, "original_name");
+        if ((!cJSON_IsString(name_item) || name_item->valuestring[0] == '\0') && original_name) {
+            cJSON_ReplaceItemInObject(entry, "original_name", cJSON_CreateString(original_name));
+        }
+    }
+
+    set_json_number(db, "last_upload_at", (double)now);
+    set_json_number(db, "total_uploads", (double)(get_json_int(db, "total_uploads") + 1));
+    set_json_number(db, "total_bytes_uploaded", (double)(get_json_ll(db, "total_bytes_uploaded") + (long long)size_bytes));
+    set_json_number(db, "total_client_deliveries", (double)(get_json_int(db, "total_client_deliveries") + (client_deliveries > 0 ? client_deliveries : 0)));
+
+    if (is_new) {
+        set_json_number(db, "total_unique_images", (double)(get_json_int(db, "total_unique_images") + 1));
+    } else {
+        set_json_number(db, "total_duplicate_uploads", (double)(get_json_int(db, "total_duplicate_uploads") + 1));
+    }
+
+    int ok = save_stats_db(db);
+    cJSON_Delete(db);
+    return ok;
+}
+
+static void sanitize_stat_key(const char *src, char *dst, size_t dst_size) {
+    size_t j = 0;
+    if (!dst || dst_size == 0) return;
+    if (!src || src[0] == '\0') {
+        snprintf(dst, dst_size, "unknown");
+        return;
+    }
+
+    for (size_t i = 0; src[i] != '\0' && j < dst_size - 1; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '@') {
+            dst[j++] = (char)c;
+        } else if (c == ' ') {
+            dst[j++] = '_';
+        }
+    }
+
+    dst[j] = '\0';
+    if (j == 0) snprintf(dst, dst_size, "unknown");
+}
+
+static cJSON *get_or_create_object_item(cJSON *parent, const char *key) {
+    if (!parent || !key) return NULL;
+
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(parent, key);
+    if (cJSON_IsObject(item)) return item;
+
+    if (item) {
+        cJSON_DeleteItemFromObjectCaseSensitive(parent, key);
+    }
+
+    item = cJSON_CreateObject();
+    if (!item) return NULL;
+    cJSON_AddItemToObject(parent, key, item);
+    return item;
+}
+
+static cJSON *get_or_create_array_item(cJSON *parent, const char *key) {
+    if (!parent || !key) return NULL;
+
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(parent, key);
+    if (cJSON_IsArray(item)) return item;
+
+    if (item) {
+        cJSON_DeleteItemFromObjectCaseSensitive(parent, key);
+    }
+
+    item = cJSON_CreateArray();
+    if (!item) return NULL;
+    cJSON_AddItemToObject(parent, key, item);
+    return item;
+}
+
+static cJSON *create_default_feature_stats_db(void) {
+    time_t now = time(NULL);
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return NULL;
+
+    cJSON_AddNumberToObject(root, "version", 1);
+    cJSON_AddNumberToObject(root, "created_at", (double)now);
+    cJSON_AddNumberToObject(root, "updated_at", (double)now);
+    cJSON_AddNumberToObject(root, "total_commands", 0);
+    cJSON_AddItemToObject(root, "commands", cJSON_CreateObject());
+    cJSON_AddItemToObject(root, "users", cJSON_CreateObject());
+    cJSON_AddItemToObject(root, "recent_events", cJSON_CreateArray());
+    return root;
+}
+
+static cJSON *load_feature_stats_db(void) {
+    FILE *fp = fopen(FEATURE_STATS_DB_FILE, "rb");
+    if (!fp) return create_default_feature_stats_db();
+
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return create_default_feature_stats_db();
+    }
+
+    long size = ftell(fp);
+    if (size <= 0) {
+        fclose(fp);
+        return create_default_feature_stats_db();
+    }
+    rewind(fp);
+
+    char *content = (char *)malloc((size_t)size + 1);
+    if (!content) {
+        fclose(fp);
+        return create_default_feature_stats_db();
+    }
+
+    size_t read_len = fread(content, 1, (size_t)size, fp);
+    fclose(fp);
+    content[read_len] = '\0';
+
+    cJSON *root = cJSON_Parse(content);
+    free(content);
+    if (!root) return create_default_feature_stats_db();
+
+    get_or_create_object_item(root, "commands");
+    get_or_create_object_item(root, "users");
+    get_or_create_array_item(root, "recent_events");
+
+    return root;
+}
+
+static int save_feature_stats_db(cJSON *db) {
+    if (!db) return 0;
+    if (!ensure_directory_exists(g_upload_dir)) return 0;
+
+    cJSON_ReplaceItemInObject(db, "updated_at", cJSON_CreateNumber((double)time(NULL)));
+
+    char *raw = cJSON_Print(db);
+    if (!raw) return 0;
+
+    FILE *fp = fopen(FEATURE_STATS_DB_FILE, "wb");
+    if (!fp) {
+        free(raw);
+        return 0;
+    }
+
+    fwrite(raw, 1, strlen(raw), fp);
+    fclose(fp);
+    free(raw);
+    return 1;
+}
+
+static void increment_counter(cJSON *obj, const char *key, int delta) {
+    if (!obj || !key) return;
+    int current = get_json_int(obj, key);
+    set_json_number(obj, key, (double)(current + delta));
+}
+
+static int get_object_entries_count(cJSON *obj) {
+    if (!cJSON_IsObject(obj)) return 0;
+    int count = 0;
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, obj) {
+        count++;
+    }
+    return count;
+}
+
+static int record_feature_event(const char *user, const char *command, const char *details) {
+    char safe_user[128] = {0};
+    char safe_command[128] = {0};
+    char safe_details[768] = {0};
+    char user_key[128] = {0};
+    char command_key[128] = {0};
+
+    sanitize_log_field(user ? user : "unknown", safe_user, sizeof(safe_user));
+    sanitize_log_field(command ? command : "unknown", safe_command, sizeof(safe_command));
+    sanitize_log_field(details ? details : "", safe_details, sizeof(safe_details));
+
+    sanitize_stat_key(safe_user, user_key, sizeof(user_key));
+    sanitize_stat_key(safe_command, command_key, sizeof(command_key));
+
+    cJSON *db = load_feature_stats_db();
+    if (!db) return 0;
+
+    cJSON *commands_obj = get_or_create_object_item(db, "commands");
+    cJSON *users_obj = get_or_create_object_item(db, "users");
+    cJSON *recent_events = get_or_create_array_item(db, "recent_events");
+    if (!commands_obj || !users_obj || !recent_events) {
+        cJSON_Delete(db);
+        return 0;
+    }
+
+    increment_counter(db, "total_commands", 1);
+    increment_counter(commands_obj, command_key, 1);
+
+    cJSON *user_obj = get_or_create_object_item(users_obj, user_key);
+    if (!user_obj) {
+        cJSON_Delete(db);
+        return 0;
+    }
+
+    if (!cJSON_IsString(cJSON_GetObjectItemCaseSensitive(user_obj, "display_name"))) {
+        cJSON_AddStringToObject(user_obj, "display_name", safe_user);
+    }
+    if (!cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(user_obj, "first_seen_at"))) {
+        cJSON_AddNumberToObject(user_obj, "first_seen_at", (double)time(NULL));
+    }
+
+    increment_counter(user_obj, "total_commands", 1);
+    cJSON_ReplaceItemInObject(user_obj, "last_seen_at", cJSON_CreateNumber((double)time(NULL)));
+    cJSON_ReplaceItemInObject(user_obj, "last_command", cJSON_CreateString(safe_command));
+
+    cJSON *user_commands = get_or_create_object_item(user_obj, "commands");
+    if (user_commands) increment_counter(user_commands, command_key, 1);
+
+    cJSON *event = cJSON_CreateObject();
+    if (event) {
+        cJSON_AddNumberToObject(event, "timestamp", (double)time(NULL));
+        cJSON_AddStringToObject(event, "user", safe_user);
+        cJSON_AddStringToObject(event, "command", safe_command);
+        cJSON_AddStringToObject(event, "details", safe_details);
+        cJSON_AddItemToArray(recent_events, event);
+
+        while (cJSON_GetArraySize(recent_events) > FEATURE_RECENT_EVENTS_MAX) {
+            cJSON_DeleteItemFromArray(recent_events, 0);
+        }
+    }
+
+    int ok = save_feature_stats_db(db);
+    cJSON_Delete(db);
+    return ok;
+}
+
+struct ranked_counter_entry {
+    cJSON *item;
+    char name[128];
+    int count;
+};
+
+static int compare_ranked_counters_desc(const void *left, const void *right) {
+    const struct ranked_counter_entry *a = (const struct ranked_counter_entry *)left;
+    const struct ranked_counter_entry *b = (const struct ranked_counter_entry *)right;
+    return b->count - a->count;
+}
+
+struct ranked_image_entry {
+    cJSON *item;
+    int upload_count;
+};
+
+static int compare_ranked_images_desc(const void *left, const void *right) {
+    const struct ranked_image_entry *a = (const struct ranked_image_entry *)left;
+    const struct ranked_image_entry *b = (const struct ranked_image_entry *)right;
+    return b->upload_count - a->upload_count;
+}
+
 void log_command(const char *user, const char *command, const char *details) {
     FILE *fp = fopen("server.log", "a");
     if (fp) {
@@ -129,6 +611,10 @@ void log_command(const char *user, const char *command, const char *details) {
             time_str, safe_user, safe_command, safe_details);
         fclose(fp);
     }
+
+    record_feature_event(user ? user : "unknown",
+                         command ? command : "unknown",
+                         details ? details : "");
 }
 
 void get_qs_var(const struct mg_str *query, const char *name, char *dst, size_t dst_len) {
@@ -1113,67 +1599,94 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
         mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
         return;
     }
-    
+
+    if (!ensure_stats_storage()) {
+        mg_http_reply(c, 500, g_cors_headers, "Unable to initialize upload storage\n");
+        return;
+    }
+
     struct mg_http_part part;
     size_t ofs = 0;
     int uploaded = 0;
     char saved_path[512] = {0};
-    
-    while ((ofs = mg_http_next_multipart(hm->body, ofs, &part)) > 0) {
-        if (part.filename.len > 0) {
-            char safe_name[256];
-            sanitize_filename(safe_name, part.filename.buf, part.filename.len);
-            
-            snprintf(saved_path, sizeof(saved_path), "%s/%s", g_upload_dir, safe_name);
-            
-            FILE *fp = fopen(saved_path, "wb");
-            if (fp) {
-                if (part.body.len > MAX_UPLOAD_FILE_BYTES) {
-                    fclose(fp);
-                    remove(saved_path);
-                    mg_http_reply(c, 413, g_cors_headers, "Uploaded file too large\n");
-                    return;
-                }
+    char original_name[256] = {0};
+    char image_hash[65] = {0};
+    char mime_type[64] = {0};
+    size_t upload_size = 0;
 
-                if (get_dir_size_bytes(g_upload_dir) > MAX_UPLOAD_DIR_BYTES) {
-                    fclose(fp);
-                    remove(saved_path);
-                    mg_http_reply(c, 507, g_cors_headers, "Upload storage quota exceeded\n");
+    while ((ofs = mg_http_next_multipart(hm->body, ofs, &part)) > 0) {
+        if (part.filename.len > 0 && part.body.len > 0) {
+            char safe_name[256] = {0};
+            sanitize_filename(safe_name, part.filename.buf, part.filename.len);
+
+            if (part.body.len > MAX_UPLOAD_FILE_BYTES) {
+                mg_http_reply(c, 413, g_cors_headers, "Uploaded file too large\n");
+                return;
+            }
+
+            if (get_dir_size_bytes(g_upload_dir) > MAX_UPLOAD_DIR_BYTES) {
+                mg_http_reply(c, 507, g_cors_headers, "Upload storage quota exceeded\n");
+                return;
+            }
+
+            if (!image_is_valid_buffer((const unsigned char *)part.body.buf, part.body.len)) {
+                mg_http_reply(c, 400, g_cors_headers, "Invalid image file\n");
+                return;
+            }
+
+            char ext[16] = {0};
+            extract_safe_extension(safe_name, ext, sizeof(ext));
+            snprintf(mime_type, sizeof(mime_type), "%s", guess_mime_type(ext));
+
+            compute_sha256_hex((const unsigned char *)part.body.buf, part.body.len, image_hash, sizeof(image_hash));
+            snprintf(saved_path, sizeof(saved_path), "%s/%s.%s", UNIQUE_IMAGES_DIR, image_hash, ext);
+            snprintf(original_name, sizeof(original_name), "%s", safe_name);
+            upload_size = part.body.len;
+
+            struct stat existing;
+            if (stat(saved_path, &existing) != 0) {
+                FILE *fp = fopen(saved_path, "wb");
+                if (!fp) {
+                    mg_http_reply(c, 500, g_cors_headers, "Unable to store uploaded file\n");
                     return;
                 }
 
                 fwrite(part.body.buf, 1, part.body.len, fp);
                 fclose(fp);
-                
-                // Vérification de l'image
-                if (is_valid_image(saved_path)) {
-                    printf("✅ Image valide reçue: %s\n", saved_path);
-                    uploaded = 1;
-                } else {
-                    printf("❌ Fichier invalide (pas une image supportée): %s\n", saved_path);
-                    remove(saved_path); // Supprimer le fichier invalide
-                }
+                printf("✅ New unique image stored: %s\n", saved_path);
+            } else {
+                printf("♻️ Duplicate image detected by hash: %s\n", image_hash);
             }
+
+            if (!is_valid_image(saved_path)) {
+                remove(saved_path);
+                mg_http_reply(c, 400, g_cors_headers, "Uploaded content is not a supported image\n");
+                return;
+            }
+
+            uploaded = 1;
+            break;
         }
     }
-    
+
     if (uploaded) {
         char target_id[32];
         char type[32] = {0};
         char effect[32] = {0};
         char value_str[16] = {0};
+        int found = 0;
 
         get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
         get_qs_var(&hm->query, "type", type, sizeof(type));
         get_qs_var(&hm->query, "effect", effect, sizeof(effect));
         get_qs_var(&hm->query, "value", value_str, sizeof(value_str));
-        
+
         if (strlen(target_id) > 0) {
             if (strcmp(target_id, "*") == 0 && !validate_admin_token(hm)) {
                 mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required for wildcard\n");
                 return;
             }
-            
+
             if (strcmp(target_id, "*") != 0 && check_rate_limit(hm, target_id)) {
                 mg_http_reply(c, 429, g_cors_headers, "Too Many Requests for this target\n");
                 return;
@@ -1183,10 +1696,10 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
             struct mg_str *h = mg_http_get_header(hm, "Host");
             if (h) sanitize_host(host, h->buf, h->len, sizeof(host));
             else snprintf(host, sizeof(host), "localhost:8000");
-            
+
             char full_url[1024];
             snprintf(full_url, sizeof(full_url), "http://%s/%s", host, saved_path);
-            
+
             cJSON *json = cJSON_CreateObject();
             if (strcmp(type, "marquee") == 0) {
                 cJSON_AddStringToObject(json, "command", "marquee");
@@ -1204,21 +1717,225 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
                 }
             }
 
-            int found = send_command_to_clients(c, target_id, json);
+            found = send_command_to_clients(c, target_id, json);
             cJSON_Delete(json);
-            
+
             const char *user = get_user_from_token(hm);
             char details[600];
             snprintf(details, sizeof(details), "Target: %s, Type: %s, File: %s", target_id, type, saved_path);
             log_command(user, "upload", details);
-            
-            mg_http_reply(c, 200, g_cors_headers, "Uploaded and sent to %d client(s)\n", found);
+        }
+
+        record_image_upload_stat(image_hash, saved_path, original_name, mime_type, upload_size, found);
+
+        if (strlen(target_id) > 0) {
+            mg_http_reply(c, 200, g_cors_headers,
+                          "Uploaded (hash=%s) and sent to %d client(s)\n",
+                          image_hash, found);
         } else {
-            mg_http_reply(c, 200, g_cors_headers, "Uploaded but no target id provided\n");
+            mg_http_reply(c, 200, g_cors_headers,
+                          "Uploaded unique image (hash=%s), no target id provided\n",
+                          image_hash);
         }
     } else {
         mg_http_reply(c, 400, g_cors_headers, "No file found in request\n");
     }
+}
+
+void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
+    if (!validate_bearer_token(hm)) {
+        mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
+        return;
+    }
+
+    cJSON *db = load_stats_db();
+    if (!db) {
+        mg_http_reply(c, 500, g_cors_headers, "Unable to read stats database\n");
+        return;
+    }
+
+    cJSON *images = cJSON_GetObjectItemCaseSensitive(db, "images");
+    int image_count = cJSON_IsArray(images) ? cJSON_GetArraySize(images) : 0;
+    int top_limit = image_count < 10 ? image_count : 10;
+
+    cJSON *top = cJSON_CreateArray();
+    if (cJSON_IsArray(images) && image_count > 0) {
+        struct ranked_image_entry *ranked =
+            (struct ranked_image_entry *)calloc((size_t)image_count, sizeof(struct ranked_image_entry));
+
+        if (ranked) {
+            int idx = 0;
+            cJSON *item = NULL;
+            cJSON_ArrayForEach(item, images) {
+                ranked[idx].item = item;
+                ranked[idx].upload_count = get_json_int(item, "upload_count");
+                idx++;
+            }
+
+            qsort(ranked, (size_t)image_count, sizeof(struct ranked_image_entry), compare_ranked_images_desc);
+
+            for (int i = 0; i < top_limit; i++) {
+                cJSON *dup = cJSON_Duplicate(ranked[i].item, 1);
+                if (dup) cJSON_AddItemToArray(top, dup);
+            }
+
+            free(ranked);
+        }
+    }
+
+    int total_uploads = get_json_int(db, "total_uploads");
+    int total_unique = get_json_int(db, "total_unique_images");
+    int total_duplicates = get_json_int(db, "total_duplicate_uploads");
+    long long total_bytes = get_json_ll(db, "total_bytes_uploaded");
+
+    cJSON *summary = cJSON_CreateObject();
+    cJSON_AddNumberToObject(summary, "total_uploads", total_uploads);
+    cJSON_AddNumberToObject(summary, "total_unique_images", total_unique);
+    cJSON_AddNumberToObject(summary, "total_duplicate_uploads", total_duplicates);
+    cJSON_AddNumberToObject(summary, "total_bytes_uploaded", (double)total_bytes);
+    cJSON_AddNumberToObject(summary, "duplicate_ratio", total_uploads > 0 ? ((double)total_duplicates / (double)total_uploads) : 0.0);
+    cJSON_AddNumberToObject(summary, "average_upload_size", total_uploads > 0 ? ((double)total_bytes / (double)total_uploads) : 0.0);
+
+    cJSON_DeleteItemFromObjectCaseSensitive(db, "summary");
+    cJSON_DeleteItemFromObjectCaseSensitive(db, "top_images");
+    cJSON_AddItemToObject(db, "summary", summary);
+    cJSON_AddItemToObject(db, "top_images", top);
+
+    cJSON *feature_db = load_feature_stats_db();
+    if (feature_db) {
+        cJSON *commands_obj = cJSON_GetObjectItemCaseSensitive(feature_db, "commands");
+        cJSON *users_obj = cJSON_GetObjectItemCaseSensitive(feature_db, "users");
+        cJSON *recent_events = cJSON_GetObjectItemCaseSensitive(feature_db, "recent_events");
+
+        int command_kinds = get_object_entries_count(commands_obj);
+        int unique_users = get_object_entries_count(users_obj);
+        int top_users_limit = unique_users < 10 ? unique_users : 10;
+        int top_features_limit = command_kinds < 15 ? command_kinds : 15;
+
+        cJSON *feature_stats = cJSON_CreateObject();
+        cJSON *feature_summary = cJSON_CreateObject();
+        cJSON *leaderboards = cJSON_CreateObject();
+        cJSON *top_users = cJSON_CreateArray();
+        cJSON *top_features = cJSON_CreateArray();
+
+        if (feature_stats && feature_summary && leaderboards && top_users && top_features) {
+            cJSON_AddNumberToObject(feature_summary, "total_commands", get_json_int(feature_db, "total_commands"));
+            cJSON_AddNumberToObject(feature_summary, "unique_users", unique_users);
+            cJSON_AddNumberToObject(feature_summary, "feature_kinds", command_kinds);
+            cJSON_AddNumberToObject(feature_summary, "recent_events_count", cJSON_IsArray(recent_events) ? cJSON_GetArraySize(recent_events) : 0);
+
+            if (cJSON_IsObject(users_obj) && unique_users > 0) {
+                struct ranked_counter_entry *ranked_users =
+                    (struct ranked_counter_entry *)calloc((size_t)unique_users, sizeof(struct ranked_counter_entry));
+
+                if (ranked_users) {
+                    int idx = 0;
+                    cJSON *it = NULL;
+                    cJSON_ArrayForEach(it, users_obj) {
+                        ranked_users[idx].item = it;
+                        ranked_users[idx].count = get_json_int(it, "total_commands");
+                        cJSON *name = cJSON_GetObjectItemCaseSensitive(it, "display_name");
+                        if (cJSON_IsString(name) && name->valuestring[0] != '\0') {
+                            snprintf(ranked_users[idx].name, sizeof(ranked_users[idx].name), "%s", name->valuestring);
+                        } else if (it->string) {
+                            snprintf(ranked_users[idx].name, sizeof(ranked_users[idx].name), "%s", it->string);
+                        } else {
+                            snprintf(ranked_users[idx].name, sizeof(ranked_users[idx].name), "unknown");
+                        }
+                        idx++;
+                    }
+
+                    qsort(ranked_users, (size_t)unique_users, sizeof(struct ranked_counter_entry), compare_ranked_counters_desc);
+
+                    for (int i = 0; i < top_users_limit; i++) {
+                        cJSON *entry = cJSON_CreateObject();
+                        if (!entry) continue;
+                        cJSON_AddStringToObject(entry, "user", ranked_users[i].name);
+                        cJSON_AddNumberToObject(entry, "total_commands", ranked_users[i].count);
+
+                        cJSON *first_seen = cJSON_GetObjectItemCaseSensitive(ranked_users[i].item, "first_seen_at");
+                        cJSON *last_seen = cJSON_GetObjectItemCaseSensitive(ranked_users[i].item, "last_seen_at");
+                        cJSON *last_command = cJSON_GetObjectItemCaseSensitive(ranked_users[i].item, "last_command");
+                        cJSON *commands = cJSON_GetObjectItemCaseSensitive(ranked_users[i].item, "commands");
+
+                        if (cJSON_IsNumber(first_seen)) cJSON_AddNumberToObject(entry, "first_seen_at", first_seen->valuedouble);
+                        if (cJSON_IsNumber(last_seen)) cJSON_AddNumberToObject(entry, "last_seen_at", last_seen->valuedouble);
+                        if (cJSON_IsString(last_command)) cJSON_AddStringToObject(entry, "last_command", last_command->valuestring);
+                        if (cJSON_IsObject(commands)) cJSON_AddItemToObject(entry, "commands", cJSON_Duplicate(commands, 1));
+
+                        cJSON_AddItemToArray(top_users, entry);
+                    }
+
+                    free(ranked_users);
+                }
+            }
+
+            if (cJSON_IsObject(commands_obj) && command_kinds > 0) {
+                struct ranked_counter_entry *ranked_features =
+                    (struct ranked_counter_entry *)calloc((size_t)command_kinds, sizeof(struct ranked_counter_entry));
+
+                if (ranked_features) {
+                    int idx = 0;
+                    cJSON *it = NULL;
+                    cJSON_ArrayForEach(it, commands_obj) {
+                        ranked_features[idx].item = it;
+                        ranked_features[idx].count = cJSON_IsNumber(it) ? it->valueint : 0;
+                        snprintf(ranked_features[idx].name, sizeof(ranked_features[idx].name), "%s", it->string ? it->string : "unknown");
+                        idx++;
+                    }
+
+                    qsort(ranked_features, (size_t)command_kinds, sizeof(struct ranked_counter_entry), compare_ranked_counters_desc);
+
+                    for (int i = 0; i < top_features_limit; i++) {
+                        cJSON *entry = cJSON_CreateObject();
+                        if (!entry) continue;
+                        cJSON_AddStringToObject(entry, "feature", ranked_features[i].name);
+                        cJSON_AddNumberToObject(entry, "count", ranked_features[i].count);
+                        cJSON_AddItemToArray(top_features, entry);
+                    }
+
+                    free(ranked_features);
+                }
+            }
+
+            cJSON_AddItemToObject(leaderboards, "top_users", top_users);
+            cJSON_AddItemToObject(leaderboards, "top_features", top_features);
+
+            cJSON_AddNumberToObject(feature_stats, "version", get_json_int(feature_db, "version"));
+            cJSON_AddNumberToObject(feature_stats, "created_at", get_json_ll(feature_db, "created_at"));
+            cJSON_AddNumberToObject(feature_stats, "updated_at", get_json_ll(feature_db, "updated_at"));
+            cJSON_AddNumberToObject(feature_stats, "total_commands", get_json_int(feature_db, "total_commands"));
+            cJSON_AddItemToObject(feature_stats, "summary", feature_summary);
+            cJSON_AddItemToObject(feature_stats, "leaderboards", leaderboards);
+            cJSON_AddItemToObject(feature_stats, "commands", cJSON_Duplicate(commands_obj, 1));
+            cJSON_AddItemToObject(feature_stats, "users", cJSON_Duplicate(users_obj, 1));
+            cJSON_AddItemToObject(feature_stats, "recent_events", cJSON_Duplicate(recent_events, 1));
+
+            cJSON_DeleteItemFromObjectCaseSensitive(db, "feature_stats");
+            cJSON_AddItemToObject(db, "feature_stats", feature_stats);
+        } else {
+            cJSON_Delete(feature_stats);
+            cJSON_Delete(feature_summary);
+            cJSON_Delete(leaderboards);
+            cJSON_Delete(top_users);
+            cJSON_Delete(top_features);
+        }
+
+        cJSON_Delete(feature_db);
+    }
+
+    char *json = cJSON_Print(db);
+    cJSON_Delete(db);
+
+    if (!json) {
+        mg_http_reply(c, 500, g_cors_headers, "Unable to serialize stats\n");
+        return;
+    }
+
+    char headers[1024];
+    snprintf(headers, sizeof(headers), "Content-Type: application/json\r\n%s", g_cors_headers);
+    mg_http_reply(c, 200, headers, "%s", json);
+    free(json);
 }
 
 void handle_screenshot_request(struct mg_connection *c, struct mg_http_message *hm) {

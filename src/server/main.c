@@ -248,6 +248,9 @@ static void event_handler(struct mg_connection *c, int ev, void *ev_data) {
         else if (mg_match(hm->uri, mg_str("/api/upload_screenshot"), NULL)) {
             handle_upload_screenshot(c, hm);
         }
+        else if (mg_match(hm->uri, mg_str("/api/stats"), NULL)) {
+            handle_stats(c, hm);
+        }
         // Servir les fichiers uploadés
         else if (mg_match(hm->uri, mg_str("/uploads/*"), NULL)) {
             struct mg_http_serve_opts opts = {

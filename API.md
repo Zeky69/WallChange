@@ -144,11 +144,11 @@ Upload une image locale et l'envoie optionnellement à un client.
 
 **Réponse (200) :**
 ```
-Uploaded and sent to 1 client(s)
+Uploaded (hash=9f8d8a4f...) and sent to 1 client(s)
 ```
 ou
 ```
-Uploaded but no target id provided
+Uploaded unique image (hash=9f8d8a4f...), no target id provided
 ```
 
 **Exemples curl :**
@@ -186,9 +186,120 @@ curl -H "Authorization: Bearer $TOKEN" \
 ```
 
 **Notes :**
-- Le fichier est uploadé dans le dossier `uploads/` du serveur
+- Le serveur calcule un hash SHA-256 du contenu de chaque image uploadée
+- Les images sont stockées en exemplaire unique dans `uploads/unique/` (même image = même hash)
+- Si le même contenu est envoyé avec un nom différent, aucun doublon disque n'est créé
 - L'URL générée est automatiquement envoyée au client cible
 - Formats supportés : JPG, PNG, GIF (animé inclus), BMP, etc.
+
+---
+
+### `GET /api/stats`
+
+Retourne les statistiques complètes : images + toutes les fonctionnalités + leaderboard utilisateurs.
+
+**Auth requise :** Oui (User ou Admin)
+
+**Réponse (200) :**
+```json
+{
+  "version": 1,
+  "created_at": 1760000000,
+  "updated_at": 1760000100,
+  "last_upload_at": 1760000095,
+  "total_uploads": 42,
+  "total_unique_images": 18,
+  "total_duplicate_uploads": 24,
+  "total_bytes_uploaded": 12345678,
+  "total_client_deliveries": 205,
+  "summary": {
+    "total_uploads": 42,
+    "total_unique_images": 18,
+    "total_duplicate_uploads": 24,
+    "total_bytes_uploaded": 12345678,
+    "duplicate_ratio": 0.5714,
+    "average_upload_size": 293944.7
+  },
+  "top_images": [
+    {
+      "hash": "9f8d8a4f...",
+      "stored_path": "uploads/unique/9f8d8a4f....jpg",
+      "upload_count": 12
+    }
+  ],
+  "feature_stats": {
+    "version": 1,
+    "created_at": 1760000000,
+    "updated_at": 1760000120,
+    "total_commands": 330,
+    "summary": {
+      "total_commands": 330,
+      "unique_users": 9,
+      "feature_kinds": 24,
+      "recent_events_count": 330
+    },
+    "leaderboards": {
+      "top_users": [
+        {
+          "user": "admin",
+          "total_commands": 121,
+          "last_command": "upload"
+        }
+      ],
+      "top_features": [
+        {
+          "feature": "upload",
+          "count": 68
+        }
+      ]
+    },
+    "commands": {
+      "upload": 68,
+      "send": 55,
+      "update": 21
+    },
+    "users": {
+      "admin": {
+        "display_name": "admin",
+        "total_commands": 121
+      }
+    },
+    "recent_events": [
+      {
+        "timestamp": 1760000115,
+        "user": "admin",
+        "command": "upload",
+        "details": "Target: *"
+      }
+    ]
+  ],
+  "images": [
+    {
+      "hash": "9f8d8a4f...",
+      "stored_path": "uploads/unique/9f8d8a4f....jpg",
+      "original_name": "wallpaper.jpg",
+      "mime": "image/jpeg",
+      "size_bytes": 354120,
+      "first_seen_at": 1760000002,
+      "last_seen_at": 1760000095,
+      "upload_count": 12
+    }
+  ]
+}
+```
+
+**Ce qui est stocké en persistant :**
+- Toutes les commandes API journalisées via `log_command`
+- Les compteurs globaux par fonctionnalité
+- Les compteurs par utilisateur
+- Le leaderboard utilisateurs et fonctionnalités (calculé depuis le stockage)
+- Un historique d'événements récents (`recent_events`)
+
+**Exemple :**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/stats"
+```
 
 ---
 
