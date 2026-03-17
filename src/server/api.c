@@ -299,7 +299,14 @@ static long long get_json_ll(cJSON *obj, const char *key) {
 }
 
 static void set_json_number(cJSON *obj, const char *key, double value) {
-    cJSON_ReplaceItemInObject(obj, key, cJSON_CreateNumber(value));
+    if (!obj || !key) return;
+
+    cJSON *existing = cJSON_GetObjectItemCaseSensitive(obj, key);
+    if (existing) {
+        cJSON_ReplaceItemInObject(obj, key, cJSON_CreateNumber(value));
+    } else {
+        cJSON_AddNumberToObject(obj, key, value);
+    }
 }
 
 static int record_image_upload_stat(const char *hash,
