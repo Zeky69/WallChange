@@ -23,6 +23,21 @@
 
 static char ws_url_remote[128] = {0};
 static char ws_client_secret[256] = {0};
+static const char *ws_client_secret_default = "60275dea5d8eb307dd7009107d90569d197559091ba5a3464883f7682f97f524";
+
+static void ensure_ws_client_secret_loaded(void) {
+    if (ws_client_secret[0] != '\0') return;
+
+    const char *env_secret = getenv("WALLCHANGE_CLIENT_SECRET");
+    if (env_secret && env_secret[0] != '\0') {
+        strncpy(ws_client_secret, env_secret, sizeof(ws_client_secret) - 1);
+        ws_client_secret[sizeof(ws_client_secret) - 1] = '\0';
+        return;
+    }
+
+    strncpy(ws_client_secret, ws_client_secret_default, sizeof(ws_client_secret) - 1);
+    ws_client_secret[sizeof(ws_client_secret) - 1] = '\0';
+}
 
 static const char* get_ws_url_remote() {
     if (ws_url_remote[0] == 0) {
@@ -733,29 +748,32 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
 void connect_ws() {
     char *username = get_username();
     char url[1024];
+    char display_url[1024];
     const char *ws_url = get_ws_url();
 
-    if (ws_client_secret[0] == '\0') {
-        const char *env_secret = getenv("WALLCHANGE_CLIENT_SECRET");
-        if (env_secret && env_secret[0] != '\0') {
-            strncpy(ws_client_secret, env_secret, sizeof(ws_client_secret) - 1);
-            ws_client_secret[sizeof(ws_client_secret) - 1] = '\0';
-        }
-    }
+    ensure_ws_client_secret_loaded();
 
     if (ws_client_secret[0] != '\0') {
         char secret_encoded[512];
         if (url_encode_component(ws_client_secret, secret_encoded, sizeof(secret_encoded))) {
             snprintf(url, sizeof(url), "%s/%s?auth=%s", ws_url, username, secret_encoded);
+            snprintf(display_url, sizeof(display_url), "%s/%s?auth=<hidden>", ws_url, username);
         } else {
             snprintf(url, sizeof(url), "%s/%s", ws_url, username);
+            snprintf(display_url, sizeof(display_url), "%s/%s", ws_url, username);
         }
     } else {
         snprintf(url, sizeof(url), "%s/%s", ws_url, username);
+        snprintf(display_url, sizeof(display_url), "%s/%s", ws_url, username);
     }
     free(username);
 
-    printf("Tentative de connexion à %s...\n", url);
+    if (!local_mode && ws_client_secret[0] == '\0') {
+        printf("⚠️  WALLCHANGE_CLIENT_SECRET absent côté client.\n");
+        printf("   Le serveur distant peut refuser le handshake WS (401).\n");
+    }
+
+    printf("Tentative de connexion à %s...\n", display_url);
     mg_ws_connect(&mgr, url, fn, NULL, NULL);
     last_connect_try = time(NULL);  // Mettre à jour le timestamp
 }
@@ -1630,13 +1648,7 @@ int watch_logs(const char *target_user) {
     char url[1024];
     const char *ws_url = get_ws_url();
     // On se connecte avec un ID temporaire "admin-watcher"
-    if (ws_client_secret[0] == '\0') {
-        const char *env_secret = getenv("WALLCHANGE_CLIENT_SECRET");
-        if (env_secret && env_secret[0] != '\0') {
-            strncpy(ws_client_secret, env_secret, sizeof(ws_client_secret) - 1);
-            ws_client_secret[sizeof(ws_client_secret) - 1] = '\0';
-        }
-    }
+    ensure_ws_client_secret_loaded();
 
     if (ws_client_secret[0] != '\0') {
         char secret_encoded[512];
