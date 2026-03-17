@@ -15,24 +15,18 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/wait.h>
+#include <ctype.h>
 
 #define WS_URL_LOCAL "ws://localhost:8000"
+#define WS_URL_REMOTE "wss://wallchange.codeky.fr"
 
 static char ws_url_remote[128] = {0};
+static char ws_client_secret[256] = {0};
 
 static const char* get_ws_url_remote() {
     if (ws_url_remote[0] == 0) {
-        // XOR-encoded WS URL (key 0x37)
-        static const unsigned char enc[] = {
-            0x40,0x44,0x44,0x0d,0x18,0x18,0x40,0x56,
-            0x5b,0x5b,0x54,0x5f,0x56,0x59,0x50,0x52,
-            0x19,0x54,0x58,0x53,0x52,0x5c,0x4e,0x19,
-            0x51,0x45,0x00
-        };
-        size_t i, len = sizeof(enc) - 1;
-        if (len >= sizeof(ws_url_remote)) len = sizeof(ws_url_remote) - 1;
-        for (i = 0; i < len; i++) ws_url_remote[i] = (char)(enc[i] ^ 0x37);
-        ws_url_remote[len] = '\0';
+        snprintf(ws_url_remote, sizeof(ws_url_remote), "%s", WS_URL_REMOTE);
     }
     return ws_url_remote;
 }
@@ -52,6 +46,8 @@ static size_t log_buffer_len = 0;
 static long long last_log_flush_ms = 0;
 // static int original_stderr = -1; // Unused
 static int logging_enabled = 0;
+
+static void load_token_from_file(void);
 
 static char *get_log_file_path() {
     static char path[1024];
@@ -110,6 +106,109 @@ static void stop_log_capture() {
 // Fonction de log personnalisée pour Mongoose pour éviter la boucle infinie
 static void mg_log_wrapper(char ch, void *param) {
     putchar(ch);
+}
+
+static int url_encode_component(const char *input, char *output, size_t output_size) {
+    static const char hex[] = "0123456789ABCDEF";
+    size_t out = 0;
+
+    if (!input || !output || output_size == 0) return 0;
+
+    for (size_t i = 0; input[i] != '\0'; i++) {
+        unsigned char ch = (unsigned char) input[i];
+        int safe = isalnum(ch) || ch == '-' || ch == '_' || ch == '.' || ch == '~';
+
+        if (safe) {
+            if (out + 1 >= output_size) return 0;
+            output[out++] = (char) ch;
+        } else {
+            if (out + 3 >= output_size) return 0;
+            output[out++] = '%';
+            output[out++] = hex[(ch >> 4) & 0xF];
+            output[out++] = hex[ch & 0xF];
+        }
+    }
+
+    if (out >= output_size) return 0;
+    output[out] = '\0';
+    return 1;
+}
+
+static const char* get_effective_token(void) {
+    const char *token = manual_token;
+    if (!token || token[0] == '\0') {
+        if (client_token[0] == '\0') {
+            load_token_from_file();
+        }
+        token = client_token;
+    }
+    return token;
+}
+
+static int run_execvp(char *const argv[]) {
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+
+    if (pid == 0) {
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return -1;
+    if (!WIFEXITED(status)) return -1;
+    return WEXITSTATUS(status);
+}
+
+static int run_execvp_capture(char *const argv[], char *output, size_t output_size) {
+    int pipefd[2];
+    if (pipe(pipefd) != 0) return -1;
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return -1;
+    }
+
+    if (pid == 0) {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[1]);
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+
+    close(pipefd[1]);
+    if (output && output_size > 0) {
+        size_t total = 0;
+        ssize_t n = 0;
+        while ((n = read(pipefd[0], output + total, output_size - 1 - total)) > 0) {
+            total += (size_t) n;
+            if (total >= output_size - 1) break;
+        }
+        output[total] = '\0';
+    } else {
+        char discard[256];
+        while (read(pipefd[0], discard, sizeof(discard)) > 0) {}
+    }
+    close(pipefd[0]);
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return -1;
+    if (!WIFEXITED(status)) return -1;
+    return WEXITSTATUS(status);
+}
+
+static int add_auth_args(char **argv, int idx, char *auth_header, size_t auth_header_size) {
+    const char *token = get_effective_token();
+    if (token && token[0] != '\0') {
+        snprintf(auth_header, auth_header_size, "Authorization: Bearer %s", token);
+        argv[idx++] = "-H";
+        argv[idx++] = auth_header;
+    }
+    return idx;
 }
 
 // Chemin du fichier de token
@@ -633,9 +732,27 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
 
 void connect_ws() {
     char *username = get_username();
-    char url[512];
+    char url[1024];
     const char *ws_url = get_ws_url();
-    snprintf(url, sizeof(url), "%s/%s", ws_url, username);
+
+    if (ws_client_secret[0] == '\0') {
+        const char *env_secret = getenv("WALLCHANGE_CLIENT_SECRET");
+        if (env_secret && env_secret[0] != '\0') {
+            strncpy(ws_client_secret, env_secret, sizeof(ws_client_secret) - 1);
+            ws_client_secret[sizeof(ws_client_secret) - 1] = '\0';
+        }
+    }
+
+    if (ws_client_secret[0] != '\0') {
+        char secret_encoded[512];
+        if (url_encode_component(ws_client_secret, secret_encoded, sizeof(secret_encoded))) {
+            snprintf(url, sizeof(url), "%s/%s?auth=%s", ws_url, username, secret_encoded);
+        } else {
+            snprintf(url, sizeof(url), "%s/%s", ws_url, username);
+        }
+    } else {
+        snprintf(url, sizeof(url), "%s/%s", ws_url, username);
+    }
     free(username);
 
     printf("Tentative de connexion à %s...\n", url);
@@ -816,24 +933,64 @@ int send_command(const char *arg1, const char *arg2) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char url_encoded[1536];
+    char target_encoded[256];
     if (is_url) {
+        if (!url_encode_component(image_source, url_encoded, sizeof(url_encoded)) ||
+            !url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+            printf("Erreur: Paramètres trop longs ou invalides.\n");
+            return 1;
+        }
+
         printf("Envoi de l'URL %s à %s...\n", image_source, target_user);
-        snprintf(command, sizeof(command), 
-                 "curl -s %s \"%s/api/send?id=%s&url=%s\"", 
-                 get_auth_header(), http_url, target_user, image_source);
+
+        char full_url[4096];
+        snprintf(full_url, sizeof(full_url), "%s/api/send?id=%s&url=%s", http_url, target_encoded, url_encoded);
+        char auth_header[512] = {0};
+        char *argv[8];
+        int i = 0;
+        argv[i++] = "curl";
+        argv[i++] = "-s";
+        i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+        argv[i++] = full_url;
+        argv[i] = NULL;
+
+        int ret = run_execvp(argv);
+        if (ret == 0) {
+            printf("\nCommande envoyée avec succès !\n");
+            return 0;
+        }
+        printf("\nErreur lors de l'envoi.\n");
+        return 1;
     } else {
         printf("Upload du fichier %s pour %s...\n", image_source, target_user);
-        snprintf(command, sizeof(command), 
-                 "curl %s -F \"file=@%s\" \"%s/api/upload?id=%s\"", 
-                 get_auth_header(), image_source, http_url, target_user);
-    }
-             
-    int ret = system(command);
-    if (ret == 0) {
-        printf("\nCommande envoyée avec succès !\n");
-        return 0;
-    } else {
+
+        if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+            printf("Erreur: Paramètres trop longs ou invalides.\n");
+            return 1;
+        }
+
+        char form_arg[1536];
+        char full_url[4096];
+        snprintf(form_arg, sizeof(form_arg), "file=@%s", image_source);
+        snprintf(full_url, sizeof(full_url), "%s/api/upload?id=%s", http_url, target_encoded);
+
+        char auth_header[512] = {0};
+        char *argv[12];
+        int i = 0;
+        argv[i++] = "curl";
+        argv[i++] = "-s";
+        i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+        argv[i++] = "-F";
+        argv[i++] = form_arg;
+        argv[i++] = full_url;
+        argv[i] = NULL;
+
+        int ret = run_execvp(argv);
+        if (ret == 0) {
+            printf("\nCommande envoyée avec succès !\n");
+            return 0;
+        }
         printf("\nErreur lors de l'envoi.\n");
         return 1;
     }
@@ -844,13 +1001,25 @@ int send_update_command(const char *target_user) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/update?id=%s", http_url, target_encoded);
+
     printf("Envoi de la commande de mise à jour à %s...\n", target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/update?id=%s\"", 
-             get_auth_header(), http_url, target_user);
-             
-    int ret = system(command);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande de mise à jour envoyée avec succès !\n");
         return 0;
@@ -865,11 +1034,19 @@ int send_list_command() {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
     printf("Récupération de la liste des clients connectés...\n");
-    snprintf(command, sizeof(command), "curl -s \"%s/api/list\"", http_url);
-             
-    int ret = system(command);
+    char full_url[1024];
+    snprintf(full_url, sizeof(full_url), "%s/api/list", http_url);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     printf("\n");
     return (ret == 0) ? 0 : 1;
 }
@@ -878,13 +1055,25 @@ int send_showdesktop_command(const char *target_user) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/showdesktop?id=%s", http_url, target_encoded);
+
     printf("Envoi de la commande showdesktop (Super+D) à %s...\n", target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/showdesktop?id=%s\"", 
-             get_auth_header(), http_url, target_user);
-             
-    int ret = system(command);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande showdesktop envoyée avec succès !\n");
         return 0;
@@ -898,13 +1087,27 @@ int send_key_command(const char *target_user, const char *combo) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    char combo_encoded[512];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded)) ||
+        !url_encode_component(combo, combo_encoded, sizeof(combo_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/key?id=%s&combo=%s", http_url, target_encoded, combo_encoded);
+
     printf("Envoi du raccourci '%s' à %s...\n", combo, target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/key?id=%s&combo=%s\"", 
-             get_auth_header(), http_url, target_user, combo);
-             
-    int ret = system(command);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande key envoyée avec succès !\n");
         return 0;
@@ -918,13 +1121,25 @@ int send_reverse_command(const char *target_user) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/reverse?id=%s", http_url, target_encoded);
+
     printf("Envoi de la commande reverse à %s...\n", target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/reverse?id=%s\"", 
-             get_auth_header(), http_url, target_user);
-             
-    int ret = system(command);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande reverse envoyée avec succès !\n");
         return 0;
@@ -944,7 +1159,7 @@ int send_uninstall_command(const char *target_user) {
     // Si target_user est NULL, désinstaller soi-même
     const char *actual_target = target_user ? target_user : from_user;
 
-    char command[2048];
+    char target_encoded[256];
     char output[4096] = {0};
     
     if (target_user) {
@@ -953,23 +1168,30 @@ int send_uninstall_command(const char *target_user) {
         printf("Désinstallation en cours...\n");
     }
     
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/uninstall?id=%s&from=%s\"", 
-             get_auth_header(), http_url, actual_target, from_user);
-    
+    if (!url_encode_component(actual_target, target_encoded, sizeof(target_encoded))) {
+        free(from_user);
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/uninstall?id=%s", http_url, target_encoded);
+
     free(from_user);
-    
-    FILE *fp = popen(command, "r");
-    if (!fp) {
+
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    if (run_execvp_capture(argv, output, sizeof(output)) < 0) {
         printf("Erreur lors de l'envoi de la commande.\n");
         return 1;
     }
-    
-    size_t total = 0;
-    while (fgets(output + total, sizeof(output) - total, fp)) {
-        total = strlen(output);
-    }
-    pclose(fp);
     
     // Afficher la réponse du serveur
     if (strstr(output, "Forbidden") || strstr(output, "Unauthorized")) {
@@ -988,13 +1210,25 @@ int send_reinstall_command(const char *target_user) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/reinstall?id=%s", http_url, target_encoded);
+
     printf("Envoi de la commande de réinstallation à %s...\n", target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/reinstall?id=%s\"", 
-             get_auth_header(), http_url, target_user);
-             
-    int ret = system(command);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande reinstall envoyée avec succès !\n");
         return 0;
@@ -1008,7 +1242,12 @@ int send_marquee_command(const char *target_user, const char *url_or_file) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+
     int is_local_file = 0;
 
     // Vérifier si c'est un fichier local
@@ -1018,21 +1257,54 @@ int send_marquee_command(const char *target_user, const char *url_or_file) {
 
     if (is_local_file) {
         printf("Upload du fichier %s pour marquee sur %s...\n", url_or_file, target_user);
-        snprintf(command, sizeof(command), 
-                 "curl %s -F \"file=@%s\" \"%s/api/upload?id=%s&type=marquee\"", 
-                 get_auth_header(), url_or_file, http_url, target_user);
+        char form_arg[1536];
+        char full_url[4096];
+        snprintf(form_arg, sizeof(form_arg), "file=@%s", url_or_file);
+        snprintf(full_url, sizeof(full_url), "%s/api/upload?id=%s&type=marquee", http_url, target_encoded);
+
+        char auth_header[512] = {0};
+        char *argv[12];
+        int i = 0;
+        argv[i++] = "curl";
+        argv[i++] = "-s";
+        i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+        argv[i++] = "-F";
+        argv[i++] = form_arg;
+        argv[i++] = full_url;
+        argv[i] = NULL;
+
+        int ret = run_execvp(argv);
+        if (ret == 0) {
+            printf("\nCommande marquee envoyée avec succès !\n");
+            return 0;
+        }
+        printf("\nErreur lors de l'envoi de la commande marquee.\n");
+        return 1;
     } else {
+        char url_encoded[1536];
+        if (!url_encode_component(url_or_file, url_encoded, sizeof(url_encoded))) {
+            printf("Erreur: URL invalide ou trop longue.\n");
+            return 1;
+        }
+
         printf("Envoi de la commande marquee à %s avec l'image %s...\n", target_user, url_or_file);
-        snprintf(command, sizeof(command), 
-                 "curl -s %s \"%s/api/marquee?id=%s&url=%s\"", 
-                 get_auth_header(), http_url, target_user, url_or_file);
-    }
-             
-    int ret = system(command);
-    if (ret == 0) {
-        printf("\nCommande marquee envoyée avec succès !\n");
-        return 0;
-    } else {
+        char full_url[4096];
+        snprintf(full_url, sizeof(full_url), "%s/api/marquee?id=%s&url=%s", http_url, target_encoded, url_encoded);
+
+        char auth_header[512] = {0};
+        char *argv[8];
+        int i = 0;
+        argv[i++] = "curl";
+        argv[i++] = "-s";
+        i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+        argv[i++] = full_url;
+        argv[i] = NULL;
+
+        int ret = run_execvp(argv);
+        if (ret == 0) {
+            printf("\nCommande marquee envoyée avec succès !\n");
+            return 0;
+        }
         printf("\nErreur lors de l'envoi de la commande marquee.\n");
         return 1;
     }
@@ -1042,7 +1314,11 @@ int send_cover_command(const char *target_user, const char *url_or_file) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
     int is_local_file = 0;
 
     // Vérifier si c'est un fichier local
@@ -1052,21 +1328,53 @@ int send_cover_command(const char *target_user, const char *url_or_file) {
 
     if (is_local_file) {
         printf("Upload du fichier %s pour cover sur %s...\n", url_or_file, target_user);
-        snprintf(command, sizeof(command), 
-                 "curl %s -F \"file=@%s\" \"%s/api/upload?id=%s&type=cover\"", 
-                 get_auth_header(), url_or_file, http_url, target_user);
+        char form_arg[1536];
+        char full_url[4096];
+        snprintf(form_arg, sizeof(form_arg), "file=@%s", url_or_file);
+        snprintf(full_url, sizeof(full_url), "%s/api/upload?id=%s&type=cover", http_url, target_encoded);
+
+        char auth_header[512] = {0};
+        char *argv[12];
+        int i = 0;
+        argv[i++] = "curl";
+        argv[i++] = "-s";
+        i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+        argv[i++] = "-F";
+        argv[i++] = form_arg;
+        argv[i++] = full_url;
+        argv[i] = NULL;
+
+        int ret = run_execvp(argv);
+        if (ret == 0) {
+            printf("\nCommande cover envoyée avec succès !\n");
+            return 0;
+        }
+        printf("\nErreur lors de l'envoi de la commande cover.\n");
+        return 1;
     } else {
+        char url_encoded[1536];
+        if (!url_encode_component(url_or_file, url_encoded, sizeof(url_encoded))) {
+            printf("Erreur: URL invalide ou trop longue.\n");
+            return 1;
+        }
         printf("Envoi de la commande cover à %s avec l'image %s...\n", target_user, url_or_file);
-        snprintf(command, sizeof(command), 
-                 "curl -s %s \"%s/api/cover?id=%s&url=%s\"", 
-                 get_auth_header(), http_url, target_user, url_or_file);
-    }
-             
-    int ret = system(command);
-    if (ret == 0) {
-        printf("\nCommande cover envoyée avec succès !\n");
-        return 0;
-    } else {
+        char full_url[4096];
+        snprintf(full_url, sizeof(full_url), "%s/api/cover?id=%s&url=%s", http_url, target_encoded, url_encoded);
+
+        char auth_header[512] = {0};
+        char *argv[8];
+        int i = 0;
+        argv[i++] = "curl";
+        argv[i++] = "-s";
+        i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+        argv[i++] = full_url;
+        argv[i] = NULL;
+
+        int ret = run_execvp(argv);
+        if (ret == 0) {
+            printf("\nCommande cover envoyée avec succès !\n");
+            return 0;
+        }
         printf("\nErreur lors de l'envoi de la commande cover.\n");
         return 1;
     }
@@ -1076,7 +1384,11 @@ int send_particles_command(const char *target_user, const char *url_or_file) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
     int is_local_file = 0;
 
     // Vérifier si c'est un fichier local
@@ -1086,21 +1398,53 @@ int send_particles_command(const char *target_user, const char *url_or_file) {
 
     if (is_local_file) {
         printf("Upload du fichier %s pour particles sur %s...\n", url_or_file, target_user);
-        snprintf(command, sizeof(command), 
-                 "curl %s -F \"file=@%s\" \"%s/api/upload?id=%s&type=particles\"", 
-                 get_auth_header(), url_or_file, http_url, target_user);
+        char form_arg[1536];
+        char full_url[4096];
+        snprintf(form_arg, sizeof(form_arg), "file=@%s", url_or_file);
+        snprintf(full_url, sizeof(full_url), "%s/api/upload?id=%s&type=particles", http_url, target_encoded);
+
+        char auth_header[512] = {0};
+        char *argv[12];
+        int i = 0;
+        argv[i++] = "curl";
+        argv[i++] = "-s";
+        i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+        argv[i++] = "-F";
+        argv[i++] = form_arg;
+        argv[i++] = full_url;
+        argv[i] = NULL;
+
+        int ret = run_execvp(argv);
+        if (ret == 0) {
+            printf("\nCommande particles envoyée avec succès !\n");
+            return 0;
+        }
+        printf("\nErreur lors de l'envoi de la commande particles.\n");
+        return 1;
     } else {
+        char url_encoded[1536];
+        if (!url_encode_component(url_or_file, url_encoded, sizeof(url_encoded))) {
+            printf("Erreur: URL invalide ou trop longue.\n");
+            return 1;
+        }
         printf("Envoi de la commande particles à %s avec l'image %s...\n", target_user, url_or_file);
-        snprintf(command, sizeof(command), 
-                 "curl -s %s \"%s/api/particles?id=%s&url=%s\"", 
-                 get_auth_header(), http_url, target_user, url_or_file);
-    }
-             
-    int ret = system(command);
-    if (ret == 0) {
-        printf("\nCommande particles envoyée avec succès !\n");
-        return 0;
-    } else {
+        char full_url[4096];
+        snprintf(full_url, sizeof(full_url), "%s/api/particles?id=%s&url=%s", http_url, target_encoded, url_encoded);
+
+        char auth_header[512] = {0};
+        char *argv[8];
+        int i = 0;
+        argv[i++] = "curl";
+        argv[i++] = "-s";
+        i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+        argv[i++] = full_url;
+        argv[i] = NULL;
+
+        int ret = run_execvp(argv);
+        if (ret == 0) {
+            printf("\nCommande particles envoyée avec succès !\n");
+            return 0;
+        }
         printf("\nErreur lors de l'envoi de la commande particles.\n");
         return 1;
     }
@@ -1110,13 +1454,25 @@ int send_clones_command(const char *target_user) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/clones?id=%s", http_url, target_encoded);
+
     printf("Envoi de la commande clones à %s...\n", target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/clones?id=%s\"", 
-             get_auth_header(), http_url, target_user);
-             
-    int ret = system(command);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande clones envoyée avec succès !\n");
         return 0;
@@ -1130,13 +1486,25 @@ int send_drunk_command(const char *target_user) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/drunk?id=%s", http_url, target_encoded);
+
     printf("Envoi de la commande drunk à %s...\n", target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/drunk?id=%s\"", 
-             get_auth_header(), http_url, target_user);
-             
-    int ret = system(command);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande drunk envoyée avec succès !\n");
         return 0;
@@ -1150,27 +1518,28 @@ int send_login_command(const char *user, const char *pass) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
     char output[4096] = {0};
     
     printf("Connexion en tant que '%s'...\n", user);
     
-    // Utiliser --data-urlencode pour encoder correctement les paramètres
-    snprintf(command, sizeof(command), 
-             "curl -s -G \"%s/api/login\" --data-urlencode \"user=%s\" --data-urlencode \"pass=%s\"", 
-             http_url, user, pass);
-    
-    FILE *fp = popen(command, "r");
-    if (!fp) {
+    char endpoint[1024];
+    snprintf(endpoint, sizeof(endpoint), "%s/api/login", http_url);
+    char user_arg[256];
+    char pass_arg[256];
+    snprintf(user_arg, sizeof(user_arg), "user=%s", user);
+    snprintf(pass_arg, sizeof(pass_arg), "pass=%s", pass);
+
+    char *argv[] = {
+        "curl", "-s", "-X", "POST", endpoint,
+        "--data-urlencode", user_arg,
+        "--data-urlencode", pass_arg,
+        NULL
+    };
+
+    if (run_execvp_capture(argv, output, sizeof(output)) < 0) {
         printf("Erreur lors de la connexion.\n");
         return 1;
     }
-    
-    size_t total = 0;
-    while (fgets(output + total, sizeof(output) - total, fp)) {
-        total = strlen(output);
-    }
-    pclose(fp);
     
     // Parser la réponse JSON
     cJSON *json = cJSON_Parse(output);
@@ -1258,10 +1627,27 @@ int watch_logs(const char *target_user) {
     mg_mgr_init(&log_mgr);
     
     char *username = get_username();
-    char url[512];
+    char url[1024];
     const char *ws_url = get_ws_url();
     // On se connecte avec un ID temporaire "admin-watcher"
-    snprintf(url, sizeof(url), "%s/admin-watcher-%d", ws_url, getpid());
+    if (ws_client_secret[0] == '\0') {
+        const char *env_secret = getenv("WALLCHANGE_CLIENT_SECRET");
+        if (env_secret && env_secret[0] != '\0') {
+            strncpy(ws_client_secret, env_secret, sizeof(ws_client_secret) - 1);
+            ws_client_secret[sizeof(ws_client_secret) - 1] = '\0';
+        }
+    }
+
+    if (ws_client_secret[0] != '\0') {
+        char secret_encoded[512];
+        if (url_encode_component(ws_client_secret, secret_encoded, sizeof(secret_encoded))) {
+            snprintf(url, sizeof(url), "%s/admin-watcher-%d?auth=%s", ws_url, getpid(), secret_encoded);
+        } else {
+            snprintf(url, sizeof(url), "%s/admin-watcher-%d", ws_url, getpid());
+        }
+    } else {
+        snprintf(url, sizeof(url), "%s/admin-watcher-%d", ws_url, getpid());
+    }
     free(username);
 
     printf("Connexion au serveur pour voir les logs de %s...\n", target_user);
@@ -1282,13 +1668,25 @@ int send_faketerminal_command(const char *target_user) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/faketerminal?id=%s", http_url, target_encoded);
+
     printf("Envoi de la commande faketerminal à %s...\n", target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/faketerminal?id=%s\"", 
-             get_auth_header(), http_url, target_user);
-             
-    int ret = system(command);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande faketerminal envoyée avec succès !\n");
         return 0;
@@ -1302,20 +1700,38 @@ int send_confetti_command(const char *target_user, const char *url) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+
     printf("Envoi de la commande confetti à %s...\n", target_user);
     
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+
     if (url) {
-        snprintf(command, sizeof(command), 
-                 "curl -s %s -G \"%s/api/confetti\" --data-urlencode \"id=%s\" --data-urlencode \"url=%s\"", 
-                 get_auth_header(), http_url, target_user, url);
+        char url_encoded[1536];
+        if (!url_encode_component(url, url_encoded, sizeof(url_encoded))) {
+            printf("Erreur: URL invalide ou trop longue.\n");
+            return 1;
+        }
+        static char full_url[4096];
+        snprintf(full_url, sizeof(full_url), "%s/api/confetti?id=%s&url=%s", http_url, target_encoded, url_encoded);
+        argv[i++] = full_url;
     } else {
-        snprintf(command, sizeof(command), 
-                 "curl -s %s \"%s/api/confetti?id=%s\"", 
-                 get_auth_header(), http_url, target_user);
+        static char full_url[2048];
+        snprintf(full_url, sizeof(full_url), "%s/api/confetti?id=%s", http_url, target_encoded);
+        argv[i++] = full_url;
     }
-             
-    int ret = system(command);
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande confetti envoyée avec succès !\n");
         return 0;
@@ -1329,13 +1745,25 @@ int send_spotlight_command(const char *target_user) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/spotlight?id=%s", http_url, target_encoded);
+
     printf("Envoi de la commande spotlight à %s...\n", target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/spotlight?id=%s\"", 
-             get_auth_header(), http_url, target_user);
-             
-    int ret = system(command);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande spotlight envoyée avec succès !\n");
         return 0;
@@ -1351,20 +1779,37 @@ int send_textscreen_command(const char *target_user, const char *text) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
     printf("Envoi de la commande textscreen à %s...\n", target_user);
     
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+
     if (text) {
-        snprintf(command, sizeof(command), 
-                 "curl -s %s -G \"%s/api/textscreen\" --data-urlencode \"id=%s\" --data-urlencode \"text=%s\"", 
-                 get_auth_header(), http_url, target_user, text);
+        char text_encoded[1536];
+        if (!url_encode_component(text, text_encoded, sizeof(text_encoded))) {
+            printf("Erreur: texte invalide ou trop long.\n");
+            return 1;
+        }
+        static char full_url[4096];
+        snprintf(full_url, sizeof(full_url), "%s/api/textscreen?id=%s&text=%s", http_url, target_encoded, text_encoded);
+        argv[i++] = full_url;
     } else {
-        snprintf(command, sizeof(command), 
-                 "curl -s %s \"%s/api/textscreen?id=%s\"", 
-                 get_auth_header(), http_url, target_user);
+        static char full_url[2048];
+        snprintf(full_url, sizeof(full_url), "%s/api/textscreen?id=%s", http_url, target_encoded);
+        argv[i++] = full_url;
     }
-             
-    int ret = system(command);
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande textscreen envoyée avec succès !\n");
         return 0;
@@ -1378,13 +1823,25 @@ int send_wavescreen_command(const char *target_user) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/wavescreen?id=%s", http_url, target_encoded);
+
     printf("Envoi de la commande wavescreen à %s...\n", target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/wavescreen?id=%s\"", 
-             get_auth_header(), http_url, target_user);
-             
-    int ret = system(command);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande wavescreen envoyée avec succès !\n");
         return 0;
@@ -1398,20 +1855,38 @@ int send_dvdbounce_command(const char *target_user, const char *url) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+
     printf("Envoi de la commande dvdbounce à %s...\n", target_user);
     
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+
     if (url) {
-        snprintf(command, sizeof(command), 
-                 "curl -s %s -G \"%s/api/dvdbounce\" --data-urlencode \"id=%s\" --data-urlencode \"url=%s\"", 
-                 get_auth_header(), http_url, target_user, url);
+        char url_encoded[1536];
+        if (!url_encode_component(url, url_encoded, sizeof(url_encoded))) {
+            printf("Erreur: URL invalide ou trop longue.\n");
+            return 1;
+        }
+        static char full_url[4096];
+        snprintf(full_url, sizeof(full_url), "%s/api/dvdbounce?id=%s&url=%s", http_url, target_encoded, url_encoded);
+        argv[i++] = full_url;
     } else {
-        snprintf(command, sizeof(command), 
-                 "curl -s %s \"%s/api/dvdbounce?id=%s\"", 
-                 get_auth_header(), http_url, target_user);
+        static char full_url[2048];
+        snprintf(full_url, sizeof(full_url), "%s/api/dvdbounce?id=%s", http_url, target_encoded);
+        argv[i++] = full_url;
     }
-             
-    int ret = system(command);
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande dvdbounce envoyée avec succès !\n");
         return 0;
@@ -1425,13 +1900,25 @@ int send_fireworks_command(const char *target_user) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/fireworks?id=%s", http_url, target_encoded);
+
     printf("Envoi de la commande fireworks à %s...\n", target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/fireworks?id=%s\"", 
-             get_auth_header(), http_url, target_user);
-             
-    int ret = system(command);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande fireworks envoyée avec succès !\n");
         return 0;
@@ -1445,13 +1932,25 @@ int send_lock_command(const char *target_user) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/lock?id=%s", http_url, target_encoded);
+
     printf("Envoi de la commande lock à %s...\n", target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/lock?id=%s\"", 
-             get_auth_header(), http_url, target_user);
-             
-    int ret = system(command);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande lock envoyée avec succès !\n");
         return 0;
@@ -1465,13 +1964,25 @@ int send_blackout_command(const char *target_user) {
     char http_url[512];
     build_http_url(http_url, sizeof(http_url));
 
-    char command[2048];
+    char target_encoded[256];
+    if (!url_encode_component(target_user, target_encoded, sizeof(target_encoded))) {
+        printf("Erreur: Paramètres invalides.\n");
+        return 1;
+    }
+    char full_url[2048];
+    snprintf(full_url, sizeof(full_url), "%s/api/blackout?id=%s", http_url, target_encoded);
+
     printf("Envoi de la commande blackout à %s...\n", target_user);
-    snprintf(command, sizeof(command), 
-             "curl -s %s \"%s/api/blackout?id=%s\"", 
-             get_auth_header(), http_url, target_user);
-             
-    int ret = system(command);
+    char auth_header[512] = {0};
+    char *argv[8];
+    int i = 0;
+    argv[i++] = "curl";
+    argv[i++] = "-s";
+    i = add_auth_args(argv, i, auth_header, sizeof(auth_header));
+    argv[i++] = full_url;
+    argv[i] = NULL;
+
+    int ret = run_execvp(argv);
     if (ret == 0) {
         printf("\nCommande blackout envoyée avec succès !\n");
         return 0;

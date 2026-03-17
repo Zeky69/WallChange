@@ -3,6 +3,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <errno.h>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
@@ -12,14 +15,31 @@ static void run_cmd(const char *cmd) {
     (void)ret;
 }
 
+static int run_curl_download(const char *url, const char *filepath) {
+    if (!url || !filepath) return 0;
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        return 0;
+    }
+
+    if (pid == 0) {
+        execlp("curl", "curl", "-s", "-L", "-o", filepath, "--", url, (char *)NULL);
+        _exit(127);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        return 0;
+    }
+
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 int download_image(const char *url, const char *filepath) {
-    char command[2048];
-    // -s: silencieux, -L: suivre les redirections, -o: fichier de sortie
-    snprintf(command, sizeof(command), "curl -s -L -o '%s' '%s'", filepath, url);
-    printf("Exécution: %s\n", command);
-    int ret = system(command);
+    int ret = run_curl_download(url, filepath);
     
-    if (ret == 0) {
+    if (ret) {
         // Vérifier si c'est une image valide après téléchargement
         if (!is_valid_image(filepath)) {
             fprintf(stderr, "Erreur: Le fichier téléchargé n'est pas une image valide.\n");
@@ -89,11 +109,10 @@ static int auto_resize_if_needed(const char *filepath) {
         } else {
             free_image(data);
         }
-        if (rename(temp_path, filepath) != 0) {
-            char cmd[4096];
-            snprintf(cmd, sizeof(cmd), "mv '%s' '%s'", temp_path, filepath);
-            int ret = system(cmd);
-            (void)ret;
+            if (rename(temp_path, filepath) != 0) {
+                fprintf(stderr, "Erreur lors du remplacement du fichier optimisé: %s\n", strerror(errno));
+                remove(temp_path);
+                return 0;
         }
         printf("Image optimisée avec succès.\n");
         return 1;
@@ -182,10 +201,10 @@ void apply_wallpaper_effect(const char *filepath, const char *effect, int value)
         // Save quality 95
         if (stbi_write_jpg(temp_path, w, h, channels, data, 95)) {
             if (rename(temp_path, filepath) != 0) {
-                // Si rename échoue (cross-device), mv simple
-                char cmd[2048 * 2];
-                snprintf(cmd, sizeof(cmd), "mv '%s' '%s'", temp_path, filepath);
-                run_cmd(cmd);
+                fprintf(stderr, "Erreur lors du remplacement du fichier modifié: %s\n", strerror(errno));
+                remove(temp_path);
+                free_image(data);
+                return;
             }
             printf("Effet appliqué avec succès.\n");
         } else {

@@ -4,9 +4,111 @@
 #include "common/image_utils.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
 #include <signal.h>
+#include <dirent.h>
+
+#define LOGIN_RL_WINDOW_SEC 60
+#define LOGIN_RL_MAX_ATTEMPTS 6
+#define MAX_UPLOAD_FILE_BYTES (20 * 1024 * 1024)
+#define MAX_UPLOAD_DIR_BYTES (1024LL * 1024LL * 1024LL)
+
+struct login_rl_entry {
+    char user[64];
+    int attempts;
+    time_t first_attempt;
+};
+
+static struct login_rl_entry g_login_rl[256];
+
+static void sanitize_log_field(const char *src, char *dst, size_t dst_size) {
+    size_t j = 0;
+    if (!dst || dst_size == 0) return;
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
+
+    for (size_t i = 0; src[i] != '\0' && j < dst_size - 1; i++) {
+        char ch = src[i];
+        if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
+        dst[j++] = ch;
+    }
+    dst[j] = '\0';
+}
+
+static int is_login_rate_limited(const char *user) {
+    time_t now = time(NULL);
+
+    for (int i = 0; i < (int)(sizeof(g_login_rl) / sizeof(g_login_rl[0])); i++) {
+        if (g_login_rl[i].user[0] == '\0') continue;
+        if (strcmp(g_login_rl[i].user, user) != 0) continue;
+
+        if ((now - g_login_rl[i].first_attempt) > LOGIN_RL_WINDOW_SEC) {
+            g_login_rl[i].attempts = 0;
+            g_login_rl[i].first_attempt = now;
+            return 0;
+        }
+        return g_login_rl[i].attempts >= LOGIN_RL_MAX_ATTEMPTS;
+    }
+
+    return 0;
+}
+
+static void register_login_failure(const char *user) {
+    time_t now = time(NULL);
+    int empty_slot = -1;
+
+    for (int i = 0; i < (int)(sizeof(g_login_rl) / sizeof(g_login_rl[0])); i++) {
+        if (g_login_rl[i].user[0] == '\0' && empty_slot < 0) {
+            empty_slot = i;
+            continue;
+        }
+        if (strcmp(g_login_rl[i].user, user) == 0) {
+            if ((now - g_login_rl[i].first_attempt) > LOGIN_RL_WINDOW_SEC) {
+                g_login_rl[i].attempts = 1;
+                g_login_rl[i].first_attempt = now;
+            } else {
+                g_login_rl[i].attempts++;
+            }
+            return;
+        }
+    }
+
+    if (empty_slot >= 0) {
+        snprintf(g_login_rl[empty_slot].user, sizeof(g_login_rl[empty_slot].user), "%s", user);
+        g_login_rl[empty_slot].attempts = 1;
+        g_login_rl[empty_slot].first_attempt = now;
+    }
+}
+
+static long long get_dir_size_bytes(const char *path) {
+    DIR *dir = opendir(path);
+    if (!dir) return 0;
+
+    long long total = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+        char full_path[1024];
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+
+        struct stat st;
+        if (stat(full_path, &st) != 0) continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            total += get_dir_size_bytes(full_path);
+        } else if (S_ISREG(st.st_mode)) {
+            total += st.st_size;
+        }
+    }
+
+    closedir(dir);
+    return total;
+}
 
 void log_command(const char *user, const char *command, const char *details) {
     FILE *fp = fopen("server.log", "a");
@@ -16,8 +118,15 @@ void log_command(const char *user, const char *command, const char *details) {
         char time_str[64];
         strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", t);
         
-        fprintf(fp, "[%s] User: %s | Command: %s | Details: %s\n", 
-                time_str, user, command, details ? details : "");
+        char safe_user[128];
+        char safe_command[128];
+        char safe_details[768];
+        sanitize_log_field(user ? user : "unknown", safe_user, sizeof(safe_user));
+        sanitize_log_field(command ? command : "unknown", safe_command, sizeof(safe_command));
+        sanitize_log_field(details ? details : "", safe_details, sizeof(safe_details));
+
+        fprintf(fp, "[%s] User: %s | Command: %s | Details: %s\n",
+            time_str, safe_user, safe_command, safe_details);
         fclose(fp);
     }
 }
@@ -54,12 +163,22 @@ int send_command_to_clients(struct mg_connection *c, const char *target_id, cJSO
 void handle_login(struct mg_connection *c, struct mg_http_message *hm) {
     char user[64] = {0};
     char pass[128] = {0};
-    
-    get_qs_var(&hm->query, "user", user, sizeof(user));
-    get_qs_var(&hm->query, "pass", pass, sizeof(pass));
+
+    if (!mg_match(hm->method, mg_str("POST"), NULL)) {
+        mg_http_reply(c, 405, g_cors_headers, "Method Not Allowed\n");
+        return;
+    }
+
+    mg_http_get_var(&hm->body, "user", user, sizeof(user));
+    mg_http_get_var(&hm->body, "pass", pass, sizeof(pass));
     
     if (strlen(user) == 0 || strlen(pass) == 0) {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'user' or 'pass' parameter\n");
+        return;
+    }
+
+    if (is_login_rate_limited(user)) {
+        mg_http_reply(c, 429, g_cors_headers, "Too many login attempts. Retry later.\n");
         return;
     }
     
@@ -96,7 +215,7 @@ void handle_login(struct mg_connection *c, struct mg_http_message *hm) {
             if (verify_or_register_user(user, pass)) {
                 // S'assurer qu'il a un token de session
                 if (g_client_infos[client_idx].token[0] == '\0') {
-                    generate_secure_token(g_client_infos[client_idx].token, 64);
+                    generate_secure_token(g_client_infos[client_idx].token, sizeof(g_client_infos[client_idx].token));
                 }
                 
                 cJSON *json = cJSON_CreateObject();
@@ -117,6 +236,7 @@ void handle_login(struct mg_connection *c, struct mg_http_message *hm) {
     }
 
     printf("⚠️  Tentative de login échouée pour '%s'\n", user);
+    register_login_failure(user);
     mg_http_reply(c, 401, g_cors_headers, "Invalid username or password\n");
 }
 
@@ -216,7 +336,11 @@ void handle_version(struct mg_connection *c, struct mg_http_message *hm) {
 }
 
 void handle_list(struct mg_connection *c, struct mg_http_message *hm) {
-    (void)hm;
+    if (!validate_bearer_token(hm)) {
+        mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
+        return;
+    }
+
     cJSON *json = cJSON_CreateArray();
     
     for (struct mg_connection *t = c->mgr->conns; t != NULL; t = t->next) {
@@ -254,38 +378,34 @@ void handle_list(struct mg_connection *c, struct mg_http_message *hm) {
 
 void handle_uninstall(struct mg_connection *c, struct mg_http_message *hm) {
     char target_id[32];
-    char from_user[32];
     get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
-    get_qs_var(&hm->query, "from", from_user, sizeof(from_user));
-    
-    int is_admin = validate_admin_token(hm);
-    int is_user = validate_bearer_token(hm);
-    int is_self_uninstall = (strlen(target_id) > 0 && strlen(from_user) > 0 && 
-                             strcmp(target_id, from_user) == 0);
-    
-    if (!is_admin && !is_self_uninstall) {
-        if (!is_user) {
-            mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
-        } else {
-            mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required to uninstall other clients\n");
-        }
+
+    if (!validate_bearer_token(hm)) {
+        mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
         return;
     }
 
-    if (strlen(target_id) > 0 && strlen(from_user) > 0) {
+    int is_admin = validate_admin_token(hm);
+    const char *user = get_user_from_token(hm);
+
+    if (strcmp(target_id, "*") == 0 && !is_admin) {
+        mg_http_reply(c, 403, g_cors_headers, "Forbidden: Admin token required for wildcard\n");
+        return;
+    }
+
+    if (!is_admin && (strlen(target_id) == 0 || !user || strcmp(user, target_id) != 0)) {
+        mg_http_reply(c, 403, g_cors_headers, "Forbidden: You can only uninstall your own client\n");
+        return;
+    }
+
+    if (strlen(target_id) > 0) {
         if (check_rate_limit(hm, target_id)) {
             mg_http_reply(c, 429, g_cors_headers, "Too Many Requests for this target\n");
             return;
         }
 
-        const char *user = get_user_from_token(hm);
         cJSON *json = cJSON_CreateObject();
         cJSON_AddStringToObject(json, "command", "uninstall");
-        // Priorité au token user. Si from_user (query param) est différent, c'est étrange,
-        // mais pour la sécurité, on utilise le user du token.
-        // Ou bien on garde from_user (pour debug) mais on ajoute "initiated_by".
-        // Le code client attend "from" pour vérifier si c'est autorisé.
-        // On écrase donc "from" avec le user authentifié pour être sûr.
         cJSON_AddStringToObject(json, "from", user); 
         char *json_str = cJSON_PrintUnformatted(json);
 
@@ -308,7 +428,7 @@ void handle_uninstall(struct mg_connection *c, struct mg_http_message *hm) {
         
         mg_http_reply(c, 200, g_cors_headers, "Uninstall request sent to %d client(s)\n", found);
     } else {
-        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' or 'from' parameter\n");
+        mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
     }
 }
 
@@ -961,6 +1081,25 @@ static void sanitize_filename(char *dst, const char *src, size_t len) {
     if (j == 0) strcpy(dst, "upload.bin");
 }
 
+static void sanitize_host(char *dst, const char *src, size_t len, size_t dst_len) {
+    size_t j = 0;
+    if (!dst || dst_len == 0) return;
+
+    for (size_t i = 0; i < len && j < dst_len - 1; i++) {
+        char c = src[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '.' || c == ':' || c == '-' ||
+            c == '[' || c == ']') {
+            dst[j++] = c;
+        }
+    }
+
+    dst[j] = '\0';
+    if (j == 0) {
+        snprintf(dst, dst_len, "localhost:8000");
+    }
+}
+
 void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
     if (!validate_bearer_token(hm)) {
         mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
@@ -981,6 +1120,20 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
             
             FILE *fp = fopen(saved_path, "wb");
             if (fp) {
+                if (part.body.len > MAX_UPLOAD_FILE_BYTES) {
+                    fclose(fp);
+                    remove(saved_path);
+                    mg_http_reply(c, 413, g_cors_headers, "Uploaded file too large\n");
+                    return;
+                }
+
+                if (get_dir_size_bytes(g_upload_dir) > MAX_UPLOAD_DIR_BYTES) {
+                    fclose(fp);
+                    remove(saved_path);
+                    mg_http_reply(c, 507, g_cors_headers, "Upload storage quota exceeded\n");
+                    return;
+                }
+
                 fwrite(part.body.buf, 1, part.body.len, fp);
                 fclose(fp);
                 
@@ -1020,8 +1173,8 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
 
             char host[128];
             struct mg_str *h = mg_http_get_header(hm, "Host");
-            if (h) snprintf(host, sizeof(host), "%.*s", (int)h->len, h->buf);
-            else strcpy(host, "localhost:8000");
+            if (h) sanitize_host(host, h->buf, h->len, sizeof(host));
+            else snprintf(host, sizeof(host), "localhost:8000");
             
             char full_url[1024];
             snprintf(full_url, sizeof(full_url), "http://%s/%s", host, saved_path);
@@ -1110,10 +1263,24 @@ void handle_upload_screenshot(struct mg_connection *c, struct mg_http_message *h
     int uploaded = 0;
     char saved_path[512] = {0};
     char target_id[32];
+    char safe_target_id[64] = {0};
     get_qs_var(&hm->query, "id", target_id, sizeof(target_id));
     
     if (strlen(target_id) == 0) {
         mg_http_reply(c, 400, g_cors_headers, "Missing 'id' parameter\n");
+        return;
+    }
+
+    const char *user = get_user_from_token(hm);
+    int is_admin = validate_admin_token(hm);
+    if (!is_admin && (!user || strcmp(user, target_id) != 0)) {
+        mg_http_reply(c, 403, g_cors_headers, "Forbidden: You can only upload your own screenshot\n");
+        return;
+    }
+
+    sanitize_filename(safe_target_id, target_id, strlen(target_id));
+    if (safe_target_id[0] == '\0') {
+        mg_http_reply(c, 400, g_cors_headers, "Invalid 'id' parameter\n");
         return;
     }
     
@@ -1130,19 +1297,37 @@ void handle_upload_screenshot(struct mg_connection *c, struct mg_http_message *h
     while ((ofs = mg_http_next_multipart(hm->body, ofs, &part)) > 0) {
          if (part.filename.len > 0) {
             // Overwrite existing screenshot
-            snprintf(saved_path, sizeof(saved_path), "%s/%s.jpg", ss_dir, target_id);
+            snprintf(saved_path, sizeof(saved_path), "%s/%s.jpg", ss_dir, safe_target_id);
             
             FILE *fp = fopen(saved_path, "wb");
             if (fp) {
+                if (part.body.len > MAX_UPLOAD_FILE_BYTES) {
+                    fclose(fp);
+                    remove(saved_path);
+                    mg_http_reply(c, 413, g_cors_headers, "Screenshot too large\n");
+                    return;
+                }
+
+                if (get_dir_size_bytes(g_upload_dir) > MAX_UPLOAD_DIR_BYTES) {
+                    fclose(fp);
+                    remove(saved_path);
+                    mg_http_reply(c, 507, g_cors_headers, "Upload storage quota exceeded\n");
+                    return;
+                }
+
                 fwrite(part.body.buf, 1, part.body.len, fp);
                 fclose(fp);
-                uploaded = 1;
+                if (is_valid_image(saved_path)) {
+                    uploaded = 1;
+                } else {
+                    remove(saved_path);
+                }
             }
         }
     }
     
     if (uploaded) {
-        printf("📸 Screenshot received for %s: %s\n", target_id, saved_path);
+        printf("📸 Screenshot received for %s: %s\n", safe_target_id, saved_path);
         mg_http_reply(c, 200, g_cors_headers, "Screenshot uploaded\n");
     } else {
         mg_http_reply(c, 400, g_cors_headers, "No file found\n");
@@ -1290,12 +1475,12 @@ void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
 }
 
 // ============== Discord Webhook Notifications ==============
-#define DISCORD_WEBHOOK_URL "https://discordapp.com/api/webhooks/1469883921360748616/eQ9UZyWJhvJ38WFEgE_PhPAMh9dFQ7880Csu1835iKCDT6643yZrMFV5MEJvsuYqe8L6"
 
 void send_discord_notification(const char *client_id, const char *event, const char *details) {
     // Ignorer les connexions admin
     if (client_id && strncmp(client_id, "admin", 5) == 0) return;
     if (!client_id || client_id[0] == '\0') return;
+    if (!g_discord_webhook_url || g_discord_webhook_url[0] == '\0') return;
 
     // Récupérer les infos du client si disponibles
     struct client_info *info = get_client_info(client_id);
@@ -1368,7 +1553,7 @@ void send_discord_notification(const char *client_id, const char *event, const c
             close(devnull);
         }
         execlp("curl", "curl", "-s", "-H", "Content-Type: application/json",
-               "-d", payload, DISCORD_WEBHOOK_URL, NULL);
+             "-d", payload, g_discord_webhook_url, NULL);
         _exit(1);  // Si execlp échoue
     }
     // Le parent ne wait pas (SIGCHLD est ignoré par défaut ou on pourrait signal(SIGCHLD, SIG_IGN))

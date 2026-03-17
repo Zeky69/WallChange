@@ -101,10 +101,23 @@ Les tokens sont **générés automatiquement** de façon sécurisée au démarra
 ./server -t
 
 # Avec tokens utilisateur + admin
+export WALLCHANGE_CLIENT_SECRET="secret-long-et-aleatoire"
 ./server -t -a
 
 # Sur un port personnalisé
 ./server -t -a 9000
+
+# Activer les notifications Discord (optionnel)
+export WALLCHANGE_DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+./server -t -a
+
+# Ajuster TTL token (défaut: 86400s)
+export WALLCHANGE_TOKEN_TTL_SECONDS=86400
+./server -t -a
+
+# Restreindre CORS à un origin précis
+export WALLCHANGE_CORS_ORIGIN="https://wall.codeky.fr"
+./server -t -a
 ```
 
 **Exemple de sortie :**
@@ -116,6 +129,8 @@ Les tokens sont **générés automatiquement** de façon sécurisée au démarra
 ```
 
 > ⚠️ **Gardez le token admin secret !** Le token utilisateur est automatiquement distribué aux clients.
+
+> ⚠️ **Important sécurité :** avec `-t`/`-a`, `WALLCHANGE_CLIENT_SECRET` est requis pour l'authentification WS des clients.
 
 ### Distribution automatique du token
 
@@ -177,7 +192,8 @@ curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/send?id=user&
 | `/api/clones` | GET | 🔒 Oui | Clones de la souris |
 | `/api/drunk` | GET | 🔒 Oui | Souris ivre |
 | `/api/key` | GET | 🔒 Oui | Envoyer un raccourci clavier |
-| `/api/list` | GET | 🌐 Non | Lister les clients connectés |
+| `/api/login` | POST | 🌐 Non | Authentifier un admin |
+| `/api/list` | GET | 🔒 Oui | Lister les clients connectés |
 | `/api/version` | GET | 🌐 Non | Obtenir la version du serveur |
 | `/uploads/*` | GET | 🌐 Non | Servir les fichiers uploadés |
 | `/{username}` | WS | 🌐 Non | Connexion WebSocket client |
@@ -209,6 +225,27 @@ curl -H "Authorization: Bearer TOKEN" \
 | 400 | `Missing 'id' or 'url' parameter` |
 | 401 | `Unauthorized: Invalid or missing token` |
 | 429 | `Too Many Requests for this target` (rate limit: 10s) |
+
+---
+
+### `POST /api/login`
+
+Authentifie un admin et retourne un token.
+
+**Body :** `application/x-www-form-urlencoded`
+
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `user` | string | ✅ | Nom admin |
+| `pass` | string | ✅ | Mot de passe admin |
+
+**Exemple :**
+```bash
+curl -X POST "http://localhost:8000/api/login" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "user=admin" \
+  --data-urlencode "pass=motdepasse"
+```
 
 ---
 
@@ -271,32 +308,31 @@ curl -H "Authorization: Bearer TOKEN" \
 Demande la désinstallation d'un client.
 
 **⚠️ Permissions spéciales :**
-- **Token utilisateur** : Peut seulement se désinstaller soi-même (`id` == `from`)
+- **Token utilisateur** : Peut seulement se désinstaller soi-même (`id` doit correspondre au client du token)
 - **Token admin** : Peut désinstaller n'importe quel client
 
 **Paramètres Query :**
 | Paramètre | Type | Requis | Description |
 |-----------|------|--------|-------------|
 | `id` | string | ✅ | Identifiant du client cible |
-| `from` | string | ✅ | Utilisateur qui demande la désinstallation |
 
 **Exemple (auto-désinstallation avec token utilisateur) :**
 ```bash
 curl -H "Authorization: Bearer USER_TOKEN" \
-  "http://localhost:8000/api/uninstall?id=zakburak&from=zakburak"
+  "http://localhost:8000/api/uninstall?id=zakburak"
 ```
 
 **Exemple (désinstallation d'un autre client avec token admin) :**
 ```bash
 curl -H "Authorization: Bearer ADMIN_TOKEN" \
-  "http://localhost:8000/api/uninstall?id=user1&from=admin"
+  "http://localhost:8000/api/uninstall?id=user1"
 ```
 
 **Réponses :**
 | Code | Description |
 |------|-------------|
 | 200 | `Uninstall request sent to X client(s)` |
-| 400 | `Missing 'id' or 'from' parameter` |
+| 400 | `Missing 'id' parameter` |
 | 401 | `Unauthorized: Invalid or missing token` |
 | 403 | `Forbidden: Admin token required to uninstall other clients` |
 | 429 | `Too Many Requests for this target` |
@@ -468,11 +504,11 @@ curl -H "Authorization: Bearer TOKEN" \
 
 Liste tous les clients WebSocket connectés avec leurs informations système.
 
-**Authentification :** Non requise
+**Authentification :** Bearer token requis (utilisateur ou admin)
 
 **Exemple :**
 ```bash
-curl "http://localhost:8000/api/list"
+curl -H "Authorization: Bearer TOKEN" "http://localhost:8000/api/list"
 ```
 
 **Réponse :**
@@ -590,6 +626,12 @@ Si vous envoyez des commandes trop rapidement au même client, vous recevrez une
 | Variable | Description | Usage |
 |----------|-------------|-------|
 | `WALLCHANGE_TOKEN` | Token pour les commandes CLI | Optionnel - utilisé pour forcer un token spécifique (ex: admin) |
+| `WALLCHANGE_CLIENT_SECRET` | Secret partagé pour handshake WS client | Requis avec `-t/-a` sauf override explicite |
+| `WALLCHANGE_TOKEN_TTL_SECONDS` | Durée de vie des tokens (sec) | Optionnel (min 300, défaut 86400) |
+| `WALLCHANGE_CORS_ORIGIN` | Origin CORS autorisé | Optionnel (sinon `*`) |
+| `WALLCHANGE_UPDATE_PINNED_COMMIT` | Commit SHA autorisé pour auto-update | Requis pour `perform_update()` |
+| `WALLCHANGE_ALLOW_WEAK_WS_ID` | Bypass sécurité WS ID (non recommandé) | Optionnel (`1` pour compatibilité) |
+| `WALLCHANGE_REQUIRE_TLS` | Refuse démarrage sans frontal TLS | Optionnel (`1`) |
 
 > Note : Les tokens sont maintenant générés automatiquement par le serveur avec les options `-t` et `-a`.
 

@@ -23,7 +23,7 @@ curl -H "Authorization: Bearer <token>" "http://server:port/api/endpoint"
 
 ## 📍 Endpoints
 
-### `GET /api/login`
+### `POST /api/login`
 
 Authentification admin pour obtenir le token administrateur.
 
@@ -32,6 +32,8 @@ Authentification admin pour obtenir le token administrateur.
 |-------|------|-------------|
 | `user` | string | Nom d'utilisateur admin |
 | `pass` | string | Mot de passe admin |
+
+**Content-Type :** `application/x-www-form-urlencoded`
 
 **Réponse (200) :**
 ```json
@@ -45,11 +47,16 @@ Authentification admin pour obtenir le token administrateur.
 **Erreurs :**
 - `400` - Paramètres manquants
 - `401` - Identifiants invalides
+- `405` - Méthode invalide (GET non autorisé)
+- `429` - Trop de tentatives de login
 - `503` - Auth admin non activée sur le serveur
 
 **Exemple :**
 ```bash
-curl "http://localhost:8000/api/login?user=admin&pass=monmotdepasse"
+curl -X POST "http://localhost:8000/api/login" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "user=admin" \
+  --data-urlencode "pass=monmotdepasse"
 ```
 
 ---
@@ -71,7 +78,7 @@ Retourne la version du serveur.
 
 Liste tous les clients connectés.
 
-**Auth requise :** Non
+**Auth requise :** Oui (User ou Admin)
 
 **Réponse (200) :**
 ```json
@@ -245,7 +252,6 @@ Désinstalle le client WallChange sur une machine.
 | Param | Type | Description |
 |-------|------|-------------|
 | `id` | string | ID du client cible |
-| `from` | string | ID de l'utilisateur qui fait la demande |
 
 **Réponse (200) :**
 ```
@@ -259,13 +265,13 @@ Uninstall request sent to 1 client(s)
 **Exemple (admin) :**
 ```bash
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
-  "http://localhost:8000/api/uninstall?id=alice&from=admin"
+  "http://localhost:8000/api/uninstall?id=alice"
 ```
 
 **Exemple (self) :**
 ```bash
 curl -H "Authorization: Bearer $USER_TOKEN" \
-  "http://localhost:8000/api/uninstall?id=zekynux&from=zekynux"
+  "http://localhost:8000/api/uninstall?id=zekynux"
 ```
 
 ---

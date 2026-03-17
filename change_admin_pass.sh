@@ -35,6 +35,7 @@ HASH=$(echo -n "admin:$PASSWORD" | sha256sum | awk '{print $1}')
 
 # Écrire dans le fichier
 echo "admin:$HASH" > "$CREDENTIALS_FILE"
+chmod 600 "$CREDENTIALS_FILE"
 
 echo "✅ Mot de passe mis à jour avec succès !"
 echo "Le nouveau hash a été écrit dans $CREDENTIALS_FILE"

@@ -33,6 +33,7 @@ struct client_info {
     int lock_warned;       // 1 = notif "extinction dans 4 min" envoyée
     int lock_shutdown_sent; // 1 = commande shutdown envoyée
     int connect_notified;  // 1 = notif Discord "connect" déjà envoyée
+    time_t token_issued_at;
     double last_heartbeat;
     double last_update;
 };
@@ -46,13 +47,17 @@ struct target_rl_entry {
 extern const char *g_upload_dir;
 extern const char *g_credentials_file;
 extern const char *g_cors_headers;
+extern const char *g_discord_webhook_url;
+extern const char *g_client_ws_secret;
 
 extern char g_admin_token[65];
+extern time_t g_admin_token_issued_at;
+extern int g_token_ttl_seconds;
 extern int g_user_token_enabled;
 extern int g_admin_token_enabled;
 
 extern char g_admin_user[64];
-extern char g_admin_hash[65];
+extern char g_admin_hash[160];
 
 extern struct client_info g_client_infos[MAX_CLIENTS];
 extern struct target_rl_entry g_target_rl_entries[MAX_TARGET_RL_CLIENTS];
