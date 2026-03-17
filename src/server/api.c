@@ -631,6 +631,32 @@ static cJSON *get_or_create_target_stats(cJSON *targets_obj, const char *target_
     return target_obj;
 }
 
+static void resolve_target_machine_label(const char *target_id, char *label, size_t label_len) {
+    if (!label || label_len == 0) return;
+    label[0] = '\0';
+
+    if (!target_id || target_id[0] == '\0') {
+        snprintf(label, label_len, "unknown");
+        return;
+    }
+
+    if (strcmp(target_id, "*") == 0) {
+        snprintf(label, label_len, "all");
+        return;
+    }
+
+    struct client_info *info = get_client_info(target_id);
+    if (info && info->hostname[0] != '\0') {
+        sanitize_log_field(info->hostname, label, label_len);
+    } else {
+        sanitize_log_field(target_id, label, label_len);
+    }
+
+    if (label[0] == '\0') {
+        snprintf(label, label_len, "unknown");
+    }
+}
+
 static void update_target_metrics(cJSON *targets_obj,
                                   const char *target_id,
                                   const char *command_key,
@@ -655,6 +681,10 @@ static void update_target_metrics(cJSON *targets_obj,
     if (info && info->hostname[0] != '\0') {
         set_or_replace_string(target_obj, "hostname", info->hostname);
     }
+
+    char machine_label[128] = {0};
+    resolve_target_machine_label(target_id, machine_label, sizeof(machine_label));
+    set_or_replace_string(target_obj, "machine", machine_label);
 }
 
 static int record_dispatch_stats(const char *target_id,
@@ -714,13 +744,17 @@ static int record_dispatch_stats(const char *target_id,
         if (top_targets) {
             if (matched_count > 0) {
                 for (int i = 0; i < matched_count; i++) {
+                    char machine_label[128] = {0};
                     char target_key[128] = {0};
-                    sanitize_stat_key(matched_ids[i], target_key, sizeof(target_key));
+                    resolve_target_machine_label(matched_ids[i], machine_label, sizeof(machine_label));
+                    sanitize_stat_key(machine_label, target_key, sizeof(target_key));
                     increment_counter(top_targets, target_key, 1);
                 }
             } else if (target_id && target_id[0] != '\0') {
+                char machine_label[128] = {0};
                 char target_key[128] = {0};
-                sanitize_stat_key(target_id, target_key, sizeof(target_key));
+                resolve_target_machine_label(target_id, machine_label, sizeof(machine_label));
+                sanitize_stat_key(machine_label, target_key, sizeof(target_key));
                 increment_counter(top_targets, target_key, 1);
             }
         }
@@ -731,9 +765,11 @@ static int record_dispatch_stats(const char *target_id,
             for (int i = 0; i < matched_count; i++) {
                 update_target_metrics(targets_obj, matched_ids[i], command_key, user_key, 1, 1, 0);
 
+                char machine_label[128] = {0};
                 char pair_key[256] = {0};
                 char target_key[128] = {0};
-                sanitize_stat_key(matched_ids[i], target_key, sizeof(target_key));
+                resolve_target_machine_label(matched_ids[i], machine_label, sizeof(machine_label));
+                sanitize_stat_key(machine_label, target_key, sizeof(target_key));
                 snprintf(pair_key, sizeof(pair_key), "%s__to__%s", user_key, target_key);
                 increment_counter(pairs_obj, pair_key, 1);
             }
@@ -753,9 +789,11 @@ static int record_dispatch_stats(const char *target_id,
                               found > 0 ? found : 0,
                               found > 0 ? 0 : 1);
 
+        char machine_label[128] = {0};
         char target_key[128] = {0};
         char pair_key[256] = {0};
-        sanitize_stat_key(resolved_target, target_key, sizeof(target_key));
+        resolve_target_machine_label(resolved_target, machine_label, sizeof(machine_label));
+        sanitize_stat_key(machine_label, target_key, sizeof(target_key));
         snprintf(pair_key, sizeof(pair_key), "%s__to__%s", user_key, target_key);
         increment_counter(pairs_obj, pair_key, 1);
     }
@@ -2206,11 +2244,13 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
                         if (!entry) continue;
 
                         cJSON *hostname = cJSON_GetObjectItemCaseSensitive(ranked_targets[i].item, "hostname");
+                        cJSON *machine = cJSON_GetObjectItemCaseSensitive(ranked_targets[i].item, "machine");
                         int requests = get_json_int(ranked_targets[i].item, "total_requests");
                         int deliveries = get_json_int(ranked_targets[i].item, "total_deliveries");
                         int failed = get_json_int(ranked_targets[i].item, "failed_requests");
 
                         cJSON_AddStringToObject(entry, "target_id", ranked_targets[i].name);
+                        if (cJSON_IsString(machine)) cJSON_AddStringToObject(entry, "machine", machine->valuestring);
                         cJSON_AddNumberToObject(entry, "total_requests", requests);
                         cJSON_AddNumberToObject(entry, "total_deliveries", deliveries);
                         cJSON_AddNumberToObject(entry, "failed_requests", failed);
@@ -2289,6 +2329,7 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
                         if (!entry) continue;
                         cJSON_AddStringToObject(entry, "user", cJSON_IsString(display_name) ? display_name->valuestring : (it->string ? it->string : "unknown"));
                         cJSON_AddStringToObject(entry, "target_id", best_target);
+                        cJSON_AddStringToObject(entry, "machine", best_target);
                         cJSON_AddNumberToObject(entry, "count", best_count);
                         cJSON_AddItemToArray(top_user_favorite_pcs, entry);
                     }
@@ -2326,9 +2367,11 @@ void handle_stats(struct mg_connection *c, struct mg_http_message *hm) {
                             snprintf(target_name, sizeof(target_name), "%s", separator + 6);
                             cJSON_AddStringToObject(entry, "user", user_name);
                             cJSON_AddStringToObject(entry, "target_id", target_name);
+                            cJSON_AddStringToObject(entry, "machine", target_name);
                         } else {
                             cJSON_AddStringToObject(entry, "user", "unknown");
                             cJSON_AddStringToObject(entry, "target_id", ranked_pairs[i].name);
+                            cJSON_AddStringToObject(entry, "machine", ranked_pairs[i].name);
                         }
 
                         cJSON_AddNumberToObject(entry, "count", ranked_pairs[i].count);
