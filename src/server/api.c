@@ -541,7 +541,10 @@ static int find_ws_session_slot(const char *client_id, int create_if_missing) {
     return empty_slot;
 }
 
-static int record_connection_duration_stat(const char *client_id, const char *hostname, int duration_seconds) {
+static int record_connection_duration_stat(const char *client_id,
+                                           const char *hostname,
+                                           int duration_seconds,
+                                           int count_session) {
     if (!client_id || client_id[0] == '\0' || !hostname || hostname[0] == '\0' || duration_seconds <= 0) return 0;
 
     char safe_user[128] = {0};
@@ -571,10 +574,14 @@ static int record_connection_duration_stat(const char *client_id, const char *ho
     }
 
     increment_counter(connections, "total_connection_seconds", duration_seconds);
-    increment_counter(connections, "total_connection_sessions", 1);
+    if (count_session) {
+        increment_counter(connections, "total_connection_sessions", 1);
+    }
 
     increment_counter(hostname_seconds, hostname_key, duration_seconds);
-    increment_counter(hostname_sessions, hostname_key, 1);
+    if (count_session) {
+        increment_counter(hostname_sessions, hostname_key, 1);
+    }
     increment_counter(user_hostname_seconds, user_host_key, duration_seconds);
 
     cJSON *user_obj = get_or_create_object_item(users, user_key);
@@ -584,7 +591,9 @@ static int record_connection_duration_stat(const char *client_id, const char *ho
         }
         cJSON *hostnames_obj = get_or_create_object_item(user_obj, "hostnames");
         increment_counter(user_obj, "total_connection_seconds", duration_seconds);
-        increment_counter(user_obj, "session_count", 1);
+        if (count_session) {
+            increment_counter(user_obj, "session_count", 1);
+        }
         if (hostnames_obj) increment_counter(hostnames_obj, hostname_key, duration_seconds);
     }
 
@@ -626,7 +635,7 @@ static void ws_session_account_elapsed(const char *client_id, int finalize_sessi
         }
 
         if (hostname[0] != '\0') {
-            record_connection_duration_stat(client_id, hostname, elapsed);
+            record_connection_duration_stat(client_id, hostname, elapsed, finalize_session ? 1 : 0);
         }
         g_ws_sessions[slot].last_accounted_at = now;
     }
