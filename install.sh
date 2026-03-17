@@ -78,10 +78,11 @@ mkdir -p "$INSTALL_DIR" || fail "Cannot create $INSTALL_DIR"
 mkdir -p "$AUTOSTART_DIR" || fail "Cannot create $AUTOSTART_DIR"
 mkdir -p "$(dirname "$LOG_FILE")" || fail "Cannot create log directory"
 
-# Arrêter et supprimer l'ancien processus avec nom aléatoire
+OLD_PROCESS_NAME=""
+# Supprimer l'ancien processus avec nom aléatoire (sans le tuer tout de suite)
 if [ -f "$PROCESS_NAME_FILE" ]; then
     OLD_PROCESS_NAME=$(cat "$PROCESS_NAME_FILE")
-    pkill -f "$OLD_PROCESS_NAME" 2>/dev/null || true
+    # On supprime juste le fichier binaire. L'OS garde le processus en RAM le temps qu'il tourne.
     rm -f "$INSTALL_DIR/$OLD_PROCESS_NAME" 2>/dev/null
 fi
 
@@ -90,11 +91,6 @@ if [ -f "$LOG_FILE" ]; then
     mv "$LOG_FILE" "${LOG_FILE}.old"
     echo "Log rotated." > "$LOG_FILE"
 fi
-
-# Arrêter le processus wallchange (anciennes installations)
-pkill -x wallchange 2>/dev/null || true
-
-sleep 1
 
 NEW_PROCESS_NAME=$(generate_random_name)
 echo "$NEW_PROCESS_NAME" > "$PROCESS_NAME_FILE"
@@ -169,11 +165,26 @@ if ! grep -q "alias wallchange=" "$SHELL_RC" 2>/dev/null; then
     echo "alias wallchange='$INSTALL_DIR/wallchange'" >> "$SHELL_RC"
 fi
 
-# Lancer le processus en arrière-plan
-echo "--- Started at $(date) ---" >> "$LOG_FILE"
-echo "Starting process..."
+# 6. Redémarrage propre
+echo "Step 6: Restarting process..."
 
-nohup "$INSTALL_DIR/$NEW_PROCESS_NAME" >> "$LOG_FILE" 2>&1 &
-disown
+# On utilise un sous-shell détaché. On redirige toutes ses sorties pour que 
+# wallchange sache que le script d'installation a terminé son travail.
+(
+    # On laisse 2 secondes au script pour faire son "echo successful" et quitter
+    sleep 2
+
+    # Maintenant on peut tuer les anciens processus en toute sécurité
+    if [ -n "$OLD_PROCESS_NAME" ]; then
+        pkill -f "$OLD_PROCESS_NAME" 2>/dev/null || true
+    fi
+    pkill -x wallchange 2>/dev/null || true
+
+    sleep 1
+
+    # On lance la nouvelle version
+    echo "--- Started at $(date) ---" >> "$LOG_FILE"
+    nohup "$INSTALL_DIR/$NEW_PROCESS_NAME" >> "$LOG_FILE" 2>&1 &
+) </dev/null >/dev/null 2>&1 & disown
 
 echo "successful"
