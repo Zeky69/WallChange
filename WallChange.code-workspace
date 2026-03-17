@@ -11,6 +11,9 @@
 		"files.associations": {
 			"compare": "cpp",
 			"type_traits": "cpp"
-		}
+		},
+		"github-actions.workflows.pinned.workflows": [
+			"WallChange/.github/workflows/deploy.yml"
+		]
 	}
 }

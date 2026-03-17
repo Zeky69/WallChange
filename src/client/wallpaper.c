@@ -24,7 +24,7 @@ static int run_curl_download(const char *url, const char *filepath) {
     }
 
     if (pid == 0) {
-        execlp("curl", "curl", "-s", "-L", "-o", filepath, "--", url, (char *)NULL);
+        execlp("curl", "curl", "-s", "-S", "-f", "-L", "--connect-timeout", "10", "--max-time", "60", "-o", filepath, "--", url, (char *)NULL);
         _exit(127);
     }
 
@@ -38,6 +38,12 @@ static int run_curl_download(const char *url, const char *filepath) {
 
 int download_image(const char *url, const char *filepath) {
     int ret = run_curl_download(url, filepath);
+
+    if (!ret && url && strncmp(url, "http://", 7) == 0 && strstr(url, "localhost") == NULL && strstr(url, "127.0.0.1") == NULL) {
+        char https_url[2048];
+        snprintf(https_url, sizeof(https_url), "https://%s", url + 7);
+        ret = run_curl_download(https_url, filepath);
+    }
     
     if (ret) {
         // Vérifier si c'est une image valide après téléchargement

@@ -1594,6 +1594,53 @@ static void sanitize_host(char *dst, const char *src, size_t len, size_t dst_len
     }
 }
 
+static void extract_scheme_from_header(const struct mg_str *header, char *scheme, size_t scheme_len) {
+    if (!scheme || scheme_len == 0) return;
+
+    snprintf(scheme, scheme_len, "http");
+    if (!header || header->len == 0) return;
+
+    char value[256] = {0};
+    size_t len = header->len;
+    if (len >= sizeof(value)) len = sizeof(value) - 1;
+    memcpy(value, header->buf, len);
+    value[len] = '\0';
+
+    if (strncasecmp(value, "https", 5) == 0) {
+        snprintf(scheme, scheme_len, "https");
+    } else if (strncasecmp(value, "http", 4) == 0) {
+        snprintf(scheme, scheme_len, "http");
+    }
+}
+
+static void detect_request_scheme(struct mg_http_message *hm, const char *host, char *scheme, size_t scheme_len) {
+    if (!scheme || scheme_len == 0) return;
+    snprintf(scheme, scheme_len, "http");
+    if (!hm) return;
+
+    struct mg_str *xf_proto = mg_http_get_header(hm, "X-Forwarded-Proto");
+    if (xf_proto && xf_proto->len > 0) {
+        extract_scheme_from_header(xf_proto, scheme, scheme_len);
+        return;
+    }
+
+    struct mg_str *origin = mg_http_get_header(hm, "Origin");
+    if (origin && origin->len > 0) {
+        extract_scheme_from_header(origin, scheme, scheme_len);
+        return;
+    }
+
+    struct mg_str *referer = mg_http_get_header(hm, "Referer");
+    if (referer && referer->len > 0) {
+        extract_scheme_from_header(referer, scheme, scheme_len);
+        return;
+    }
+
+    if (host && strstr(host, "codeky.fr") != NULL) {
+        snprintf(scheme, scheme_len, "https");
+    }
+}
+
 void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
     if (!validate_bearer_token(hm)) {
         mg_http_reply(c, 401, g_cors_headers, "Unauthorized: Invalid or missing token\n");
@@ -1697,8 +1744,11 @@ void handle_upload(struct mg_connection *c, struct mg_http_message *hm) {
             if (h) sanitize_host(host, h->buf, h->len, sizeof(host));
             else snprintf(host, sizeof(host), "localhost:8000");
 
+            char scheme[8];
+            detect_request_scheme(hm, host, scheme, sizeof(scheme));
+
             char full_url[1024];
-            snprintf(full_url, sizeof(full_url), "http://%s/%s", host, saved_path);
+            snprintf(full_url, sizeof(full_url), "%s://%s/%s", scheme, host, saved_path);
 
             cJSON *json = cJSON_CreateObject();
             if (strcmp(type, "marquee") == 0) {
